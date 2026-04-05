@@ -43,16 +43,27 @@ def add_wrong_word_to_gs(word_dict):
         if word_dict['en'] not in existing:
             sheet.append_row([word_dict['en'], word_dict['ja']])
 
-def remove_wrong_word_from_gs(en_word):
-    sheet = get_spreadsheet()
-    if sheet:
-        try:
-            cell = sheet.find(en_word)
-            if cell:
-                sheet.delete_rows(cell.row)
-        except:
-            pass
-
+@st.cache_resource
+def get_spreadsheet():
+    try:
+        # Secretsから文字列として読み込む
+        raw_json = st.secrets["json_key"]
+        
+        # 【重要】先頭や末尾に混じったゴミ（ドットや空白）を徹底的に排除
+        clean_json = raw_json.strip().lstrip('.')
+        info = json.loads(clean_json)
+        
+        # 鍵の中の改行コードを正しく復元
+        if "private_key" in info:
+            info["private_key"] = info["private_key"].replace("\\n", "\n")
+            
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+        client = gspread.authorize(creds)
+        return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
+    except Exception as e:
+        st.error(f"Google連携エラー詳細: {e}")
+        return None
 # --- データ読み込み（words.csv） ---
 @st.cache_data
 def load_base_data():
