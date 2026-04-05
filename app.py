@@ -55,8 +55,9 @@ def load_base_data():
     return []
 
 # --- 初期化 ---
-if 'word_list' not in st.session_state:
-    st.session_state.word_list = load_base_data()
+if 'all_words' not in st.session_state:
+    st.session_state.all_words = load_base_data()
+
 if 'wrong_words' not in st.session_state:
     from_gs = []
     try:
@@ -65,7 +66,30 @@ if 'wrong_words' not in st.session_state:
     except: pass
     st.session_state.wrong_words = from_gs
 
-# --- サイドバー表示 ---
+# --- サイドバー：範囲設定 ---
+st.sidebar.title("設定")
+if st.session_state.all_words:
+    # 番号(no)の最小値と最大値を取得
+    nos = [int(w['no']) for w in st.session_state.all_words if 'no' in w]
+    if nos:
+        min_no, max_no = min(nos), max(nos)
+        range_select = st.sidebar.slider(
+            "出題範囲 (No.)",
+            min_value=min_no,
+            max_value=max_no,
+            value=(min_no, max_no)
+        )
+        # 範囲内の単語だけを抽出
+        st.session_state.word_list = [
+            w for w in st.session_state.all_words 
+            if range_select[0] <= int(w['no']) <= range_select[1]
+        ]
+    else:
+        st.session_state.word_list = st.session_state.all_words
+else:
+    st.session_state.word_list = []
+
+# --- サイドバー：その他 ---
 wrong_count = len(st.session_state.wrong_words)
 st.sidebar.metric("現在の復習単語数", f"{wrong_count} 語")
 mode = st.sidebar.radio("モード:", ["全問", "復習"], horizontal=True)
@@ -83,7 +107,8 @@ def next_question():
         st.session_state.current_question = None
     else:
         target = random.choice(active_list)
-        others = [w for w in st.session_state.word_list if w['en'] != target['en']]
+        # 選択肢は全範囲から持ってくる（難易度維持のため）
+        others = [w for w in st.session_state.all_words if w['en'] != target['en']]
         choices = random.sample(others, min(len(others), 3)) + [target]
         random.shuffle(choices)
         st.session_state.current_question = {"target": target, "choices": choices, "answered": False}
@@ -92,16 +117,18 @@ if 'current_question' not in st.session_state:
     next_question()
 
 # --- メイン画面 ---
-if not st.session_state.word_list:
-    st.error("words.csvを読み込めませんでした。")
+if not st.session_state.all_words:
+    st.error("words.csvを読み込めませんでした。または 'no' 列がありません。")
 elif st.session_state.current_question is None:
-    st.warning("復習する単語がありません。")
+    st.warning("この範囲に単語がないか、復習単語がありません。")
 else:
     q = st.session_state.current_question
+    # No.を表示
+    no_display = f"No.{q['target']['no']} " if 'no' in q['target'] else ""
+    st.markdown(f"### {no_display}")
     st.markdown(f"# **{q['target']['en']}**")
 
     if not q["answered"]:
-        # 意味の選択肢ボタン
         cols = st.columns(2)
         for i, choice in enumerate(q["choices"]):
             with cols[i % 2]:
