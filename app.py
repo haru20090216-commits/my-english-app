@@ -3,6 +3,7 @@ import random
 import pandas as pd
 import os
 
+# --- ページ設定 ---
 st.set_page_config(page_title="最強英単語アプリ", page_icon="🔥", layout="wide")
 st.title("🔥 特訓！英単語アプリ")
 
@@ -13,6 +14,7 @@ def load_data():
     if not os.path.exists(path):
         return None
     try:
+        # GitHub/Streamlit Cloud環境では utf-8-sig が標準的です
         return pd.read_csv(path, encoding='utf-8-sig').to_dict('records')
     except:
         try:
@@ -26,7 +28,7 @@ if 'word_list' not in st.session_state:
     if data:
         st.session_state.word_list = data
     else:
-        st.error("⚠️ words.csv が見つかりません。")
+        st.error("⚠️ words.csv が見つかりません。GitHubにアップロードされているか確認してください。")
         st.stop()
 
 if 'wrong_words' not in st.session_state:
@@ -36,7 +38,7 @@ if 'wrong_words' not in st.session_state:
 st.sidebar.header("⚙️ 設定")
 mode = st.sidebar.radio("出題モード:", ["全単語から出題", "間違えた問題のみ（復習）"])
 
-# モード切替時に問題を強制リセットするためのチェック
+# モード切替時のリセット処理
 if 'last_mode' not in st.session_state:
     st.session_state.last_mode = mode
 
@@ -74,7 +76,6 @@ st.subheader(f"【{mode}】 問題: {q['target']['en']}")
 col_left, col_right = st.columns([1, 1])
 
 with col_left:
-    # index=Noneで初期状態を未選択に
     selection = st.radio(
         "意味を選んでください:",
         [opt["ja"] for opt in q["choices"]],
@@ -83,7 +84,7 @@ with col_left:
         disabled=(q["answered_choice"] is not None)
     )
 
-    # 選択された瞬間の処理
+    # 回答した瞬間の判定
     if selection and q["answered_choice"] is None:
         q["answered_choice"] = selection
         if selection == q["target"]["ja"]:
@@ -97,10 +98,11 @@ with col_left:
             st.error("❌ 残念！")
         st.rerun()
 
-    # 回答した後にだけ「次の問題へ」ボタンを表示
+    # 「次の問題へ」ボタン
     if q["answered_choice"] is not None:
         if st.button("次の問題へ ➡️", use_container_width=True):
-            del st.session_state.current_question
+            if 'current_question' in st.session_state:
+                del st.session_state.current_question
             st.rerun()
 
 with col_right:
@@ -110,4 +112,12 @@ with col_right:
             if opt["ja"] == q["target"]["ja"]:
                 st.markdown(f"✅ **{opt['en']}** : {opt['ja']}")
             else:
-                st.write(f"・ **{opt['en']}** : {opt['ja
+                st.write(f"・ **{opt['en']}** : {opt['ja']}")
+
+# --- 6. 復習リスト表示 ---
+st.write("---")
+with st.expander(f"🚩 復習リスト ({len(st.session_state.wrong_words)}個)"):
+    if st.session_state.wrong_words:
+        st.table(st.session_state.wrong_words)
+    else:
+        st.write("苦手な単語はありません！")
