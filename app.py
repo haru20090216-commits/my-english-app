@@ -24,15 +24,6 @@ def get_spreadsheet():
     except:
         return None
 
-def load_wrong_words_from_gs():
-    sheet = get_spreadsheet()
-    if sheet:
-        try:
-            return sheet.get_all_records()
-        except:
-            return []
-    return []
-
 def add_wrong_word_to_gs(word_dict):
     sheet = get_spreadsheet()
     if sheet:
@@ -66,79 +57,81 @@ def load_base_data():
 # --- 初期化 ---
 if 'word_list' not in st.session_state:
     st.session_state.word_list = load_base_data()
-
-# 起動時に一度だけスプレッドシートから読み込む
 if 'wrong_words' not in st.session_state:
-    st.session_state.wrong_words = load_wrong_words_from_gs()
+    # 起動時に一度だけ読み込む
+    from_gs = []
+    try:
+        sheet = get_spreadsheet()
+        if sheet: from_gs = sheet.get_all_records()
+    except: pass
+    st.session_state.wrong_words = from_gs
 
-# --- 画面上部の表示（復習単語数） ---
+# --- サイドバー表示 ---
 wrong_count = len(st.session_state.wrong_words)
 st.sidebar.metric("現在の復習単語数", f"{wrong_count} 語")
-if wrong_count > 0:
-    st.info(f"現在の苦手リスト: {wrong_count} 語あります。頑張りましょう！")
-
-# --- モード選択 ---
 mode = st.sidebar.radio("モード:", ["全問", "復習"], horizontal=True)
+
 if 'last_mode' not in st.session_state: st.session_state.last_mode = mode
 if st.session_state.last_mode != mode:
     st.session_state.last_mode = mode
     if 'current_question' in st.session_state: del st.session_state.current_question
 
-# 出題リストの決定
-active_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
+# 出題リスト決定
+active_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_list = st.session_state.word_list
 
-# --- 問題作成関数 ---
 def next_question():
-    if not active_list:
+    current_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
+    if not current_list:
         st.session_state.current_question = None
     else:
-        target = random.choice(active_list)
+        target = random.choice(current_list)
         others = [w for w in st.session_state.word_list if w['en'] != target['en']]
-        sample_size = min(len(others), 3)
-        choices = random.sample(others, sample_size) + [target]
+        choices = random.sample(others, min(len(others), 3)) + [target]
         random.shuffle(choices)
-        st.session_state.current_question = {"target": target, "choices": choices, "answered": False, "selected": None}
+        st.session_state.current_question = {"target": target, "choices": choices, "answered": False}
 
 if 'current_question' not in st.session_state:
     next_question()
 
-# --- クイズ画面 ---
+# --- メイン画面 ---
 if not st.session_state.word_list:
-    st.error("words.csvが読み込めません。")
+    st.error("words.csvを読み込めませんでした。")
 elif st.session_state.current_question is None:
-    st.warning("復習する単語がまだありません。「全問モード」で間違えるとここに追加されます。")
+    st.warning("復習する単語がありません。")
 else:
     q = st.session_state.current_question
     st.markdown(f"# **{q['target']['en']}**")
-    
-    # 回答前：選択肢ボタンを表示
+
     if not q["answered"]:
         cols = st.columns(2)
         for i, choice in enumerate(q["choices"]):
             with cols[i % 2]:
-                if st.button(choice["ja"], key=f"btn_{choice['en']}_{i}"):
+                if st.button(choice["ja"], key=f"btn_{i}"):
                     q["answered"] = True
-                    q["selected"] = choice["ja"]
                     if choice["ja"] == q["target"]["ja"]:
-                        st.session_state.is_correct = True
-                        # 正解ならリストから削除
+                        st.session_state.correct = True
                         st.session_state.wrong_words = [w for w in st.session_state.wrong_words if w['en'] != q['target']['en']]
                         remove_wrong_word_from_gs(q['target']['en'])
                     else:
-                        st.session_state.is_correct = False
-                        # 不正解ならリストに追加
+                        st.session_state.correct = False
                         if not any(w['en'] == q['target']['en'] for w in st.session_state.wrong_words):
                             st.session_state.wrong_words.append(q['target'])
                             add_wrong_word_to_gs(q['target'])
                     st.rerun()
-    
-    # 回答後：結果と「次へ」ボタンを表示
     else:
-        if st.session_state.is_correct:
+        # 結果表示
+        if st.session_state.correct:
             st.success(f"🎯 正解！: {q['target']['ja']}")
         else:
             st.error(f"❌ 不正解... 正解は: {q['target']['ja']}")
         
+        # --- ここで「他の選択肢」を表示 ---
+        st.write("---")
+        st.write("💡 **今回の選択肢の復習:**")
+        for c in q["choices"]:
+            mark = "✅" if c['en'] == q['target']['en'] else "・"
+            st.write(f"{mark} **{c['en']}** : {c['ja']}")
+        
         if st.button("次の問題へ ➡️"):
             del st.session_state.current_question
-            st.rerun()
+            st
