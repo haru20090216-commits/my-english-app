@@ -93,7 +93,6 @@ if mode == "クイズ":
         end_no = st.sidebar.number_input("終了番号", min(nos), max(nos), max(nos))
         filtered_words = [w for w in st.session_state.all_words if start_no <= int(w['no']) <= end_no]
         
-        # 範囲変更検知
         current_range = (start_no, end_no)
         if 'last_range' not in st.session_state or st.session_state.last_range != current_range:
             st.session_state.last_range = current_range
@@ -118,4 +117,6 @@ if mode == "辞書":
         results = [w for w in st.session_state.all_words if w['en'].lower().startswith(search_q)]
         for res in results:
             with st.expander(f"📌 {res['en']}"):
-                st.write(f"**意味:** {res['ja']} (No.{int(res['no'])
+                st.write(f"**意味:** {res['ja']} (No.{int(res['no'])})")
+    else:
+        st.write("
