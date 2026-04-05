@@ -77,8 +77,7 @@ if st.session_state.last_mode != mode:
     if 'current_question' in st.session_state: del st.session_state.current_question
 
 # 出題リスト決定
-active_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_list = st.session_state.word_list
-
+active_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
 def next_question():
     current_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
     if not current_list:
