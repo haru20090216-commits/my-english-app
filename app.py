@@ -113,4 +113,34 @@ else:
                         remove_wrong_word_from_gs(q['target']['en'])
                     else:
                         st.session_state.result_type = "wrong"
-                        if not any(w['en'] == q['target']['en'] for w in st.session
+                        if not any(w['en'] == q['target']['en'] for w in st.session_state.wrong_words):
+                            st.session_state.wrong_words.append(q['target'])
+                            add_wrong_word_to_gs(q['target'])
+                    st.rerun()
+        
+        st.write("")
+        if st.button("❓ わからない", key="dont_know", use_container_width=True):
+            q["answered"] = True
+            st.session_state.result_type = "unknown"
+            if not any(w['en'] == q['target']['en'] for w in st.session_state.wrong_words):
+                st.session_state.wrong_words.append(q['target'])
+                add_wrong_word_to_gs(q['target'])
+            st.rerun()
+
+    else:
+        if st.session_state.result_type == "correct":
+            st.success(f"🎯 正解！: {q['target']['ja']}")
+        elif st.session_state.result_type == "unknown":
+            st.warning(f"💡 覚えておきましょう: {q['target']['ja']}")
+        else:
+            st.error(f"❌ 不正解... 正解は: {q['target']['ja']}")
+        
+        st.write("---")
+        st.write("💡 **今回の単語を復習:**")
+        for c in q["choices"]:
+            mark = "✅" if c['en'] == q['target']['en'] else "・"
+            st.write(f"{mark} **{c['en']}** : {c['ja']}")
+        
+        if st.button("次の問題へ ➡️", use_container_width=True):
+            del st.session_state.current_question
+            st.rerun()
