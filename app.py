@@ -6,23 +6,29 @@ import os
 # ページ設定（コンパクトにするために余白を最小限に）
 st.set_page_config(page_title="英単語", page_icon="🎓", layout="centered")
 
-# CSSで上の余白を無理やり消す設定
-st.markdown("""
-    <style>
-    .block-container { padding-top: 1rem; padding-bottom: 0rem; }
-    div.stButton > button { width: 100%; margin-top: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
 
 # --- 1. データ読み込み ---
 @st.cache_data
 def load_data():
+    # ファイル名だけで探す（同じリポジトリ内にある前提）
     path = "words.csv"
-    if not os.path.exists(path): return None
-    try: return pd.read_csv(path, encoding='utf-8-sig').to_dict('records')
-    except:
-        try: return pd.read_csv(path, encoding='shift_jis').to_dict('records')
-        except: return None
+    
+    if not os.path.exists(path):
+        st.error(f"ファイル {path} が見つかりません！GitHubにアップロードされているか確認してください。")
+        return None
+    
+    # 読み込み（複数のエンコードを試す）
+    for enc in ['utf-8-sig', 'shift_jis', 'cp932']:
+        try:
+            df = pd.read_csv(path, encoding=enc)
+            # もし en や ja という列がなければエラーを出す
+            if 'en' not in df.columns or 'ja' not in df.columns:
+                st.error("CSVの1行目は 'en' と 'ja' になっていますか？")
+                return None
+            return df.to_dict('records')
+        except:
+            continue
+    return None
 
 # --- 2. 初期化 ---
 if 'word_list' not in st.session_state:
