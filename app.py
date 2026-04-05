@@ -30,7 +30,6 @@ def add_wrong_word_to_gs(word_dict):
         try:
             existing = sheet.col_values(1)
             if word_dict['en'] not in existing:
-                # [英, 日, 正解回数]
                 sheet.append_row([word_dict['en'], word_dict['ja'], 0])
         except: pass
 
@@ -94,6 +93,7 @@ if mode == "クイズ":
         end_no = st.sidebar.number_input("終了番号", min(nos), max(nos), max(nos))
         filtered_words = [w for w in st.session_state.all_words if start_no <= int(w['no']) <= end_no]
         
+        # 範囲変更検知
         current_range = (start_no, end_no)
         if 'last_range' not in st.session_state or st.session_state.last_range != current_range:
             st.session_state.last_range = current_range
@@ -110,55 +110,12 @@ if mode == "クイズ":
         st.session_state.last_quiz_mode = quiz_mode
         if 'current_question' in st.session_state: del st.session_state.current_question
 
-# --- 辞書機能の表示 ---
+# --- 各モードの表示 ---
 if mode == "辞書":
     st.title("📖 単語検索辞書")
-    search_query = st.text_input("英単語を入力してください (前方一致)", "").strip().lower()
-    
-    if search_query:
-        results = [w for w in st.session_state.all_words if w['en'].lower().startswith(search_query)]
-        if results:
-            for res in results:
-                with st.expander(f"📌 {res['en']}"):
-                    st.write(f"**意味:** {res['ja']}")
-                    st.write(f"**No.** {int(res['no'])}")
-        else:
-            st.info("該当する単語が見つかりませんでした。")
-    else:
-        st.write("検索ボックスに文字を入力すると、リストから意味を表示します。")
-
-# --- クイズ機能の表示 ---
-elif mode == "クイズ":
-    active_list = st.session_state.wrong_words if (quiz_mode == "復習" and st.session_state.wrong_words) else filtered_words
-
-    if 'current_question' not in st.session_state:
-        if not active_list:
-            st.session_state.current_question = None
-        else:
-            target = random.choice(active_list)
-            others = [w for w in st.session_state.all_words if w['en'] != target['en']]
-            choices = random.sample(others, min(len(others), 3)) + [target]
-            random.shuffle(choices)
-            st.session_state.current_question = {"target": target, "choices": choices, "answered": False}
-
-    if st.session_state.current_question is None:
-        st.warning("対象の単語がありません。範囲設定を確認してください。")
-    else:
-        q = st.session_state.current_question
-        count_val = q['target'].get('count', 0)
-        # countが空文字やNoneの場合を考慮して数値化
-        try:
-            display_count = int(count_val)
-        except:
-            display_count = 0
-            
-        count_info = f" (あと {5 - display_count} 回)" if quiz_mode == "復習" else ""
-        st.markdown(f"### No.{int(q['target']['no'])}{count_info}")
-        st.markdown(f"# **{q['target']['en']}**")
-
-        if not q["answered"]:
-            cols = st.columns(2)
-            for i, choice in enumerate(q["choices"]):
-                with cols[i % 2]:
-                    if st.button(choice["ja"], key=f"btn_{i}", use_container_width=True):
-                        q["
+    search_q = st.text_input("検索 (英単語を入力)", "").strip().lower()
+    if search_q:
+        results = [w for w in st.session_state.all_words if w['en'].lower().startswith(search_q)]
+        for res in results:
+            with st.expander(f"📌 {res['en']}"):
+                st.write(f"**意味:** {res['ja']} (No.{int(res['no'])
