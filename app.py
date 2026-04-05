@@ -58,7 +58,6 @@ def load_base_data():
 if 'word_list' not in st.session_state:
     st.session_state.word_list = load_base_data()
 if 'wrong_words' not in st.session_state:
-    # 起動時に一度だけ読み込む
     from_gs = []
     try:
         sheet = get_spreadsheet()
@@ -78,12 +77,12 @@ if st.session_state.last_mode != mode:
 
 # 出題リスト決定
 active_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
+
 def next_question():
-    current_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
-    if not current_list:
+    if not active_list:
         st.session_state.current_question = None
     else:
-        target = random.choice(current_list)
+        target = random.choice(active_list)
         others = [w for w in st.session_state.word_list if w['en'] != target['en']]
         choices = random.sample(others, min(len(others), 3)) + [target]
         random.shuffle(choices)
@@ -124,13 +123,14 @@ else:
         else:
             st.error(f"❌ 不正解... 正解は: {q['target']['ja']}")
         
-        # --- ここで「他の選択肢」を表示 ---
+        # 復習用リスト表示
         st.write("---")
-        st.write("💡 **今回の選択肢の復習:**")
+        st.write("💡 **今回の単語を復習:**")
         for c in q["choices"]:
             mark = "✅" if c['en'] == q['target']['en'] else "・"
             st.write(f"{mark} **{c['en']}** : {c['ja']}")
         
+        # ここで確実に question をリセット
         if st.button("次の問題へ ➡️"):
             del st.session_state.current_question
-            st
+            st.rerun()
