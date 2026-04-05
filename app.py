@@ -21,12 +21,10 @@ st.markdown("""
 @st.cache_resource
 def get_spreadsheet():
     try:
-        # Secretsから鍵を読み込む
         info = json.loads(st.secrets["json_key"])
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
         creds = Credentials.from_service_account_info(info, scopes=scopes)
         client = gspread.authorize(creds)
-        # Secretsに保存したスプレッドシートIDを使用
         return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
     except Exception as e:
         st.error(f"Google連携エラー: {e}")
@@ -35,14 +33,13 @@ def get_spreadsheet():
 def load_wrong_words_from_gs():
     sheet = get_spreadsheet()
     if sheet:
-        records = sheet.get_all_records()
-        return records
+        return sheet.get_all_records()
     return []
 
 def add_wrong_word_to_gs(word_dict):
     sheet = get_spreadsheet()
     if sheet:
-        existing = sheet.col_values(1) # A列(en)を取得
+        existing = sheet.col_values(1)
         if word_dict['en'] not in existing:
             sheet.append_row([word_dict['en'], word_dict['ja']])
 
@@ -75,15 +72,21 @@ if 'word_list' not in st.session_state:
     st.session_state.word_list = load_base_data()
 
 if 'wrong_words' not in st.session_state:
-    st.session_state.wrong_words = load_wrong_words_from_gs()
+    try:
+        st.session_state.wrong_words = load_wrong_words_from_gs()
+    except:
+        st.session_state.wrong_words = []
 
 # --- モード選択 ---
 mode = st.sidebar.radio("モード:", ["全問", "復習"], horizontal=True)
 
-if 'last_mode' not in st.session_state: st.session_state.last_mode = mode
+if 'last_mode' not in st.session_state:
+    st.session_state.last_mode = mode
+
 if st.session_state.last_mode != mode:
     st.session_state.last_mode = mode
-    if 'current_question' in st.session_state: del st.session_state.current_question
+    if 'current_question' in st.session_state:
+        del st.session_state.current_question
 
 active_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
 
@@ -125,4 +128,10 @@ else:
 
     if q["ans"]:
         if q["ans"] == q["target"]["ja"]:
-            st.markdown(f"<span style='color:green'>● **正解**: {q['target']['ja']}</span>",
+            st.markdown(f"<span style='color:green'>● **正解**: {q['target']['ja']}</span>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<span style='color:red'>● **ミス**: 正解は {q['target']['ja']}</span>", unsafe_allow_html=True)
+        
+        if st.button("次へ"):
+            del st.session_state.current_question
+            st.rerun()
