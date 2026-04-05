@@ -50,7 +50,10 @@ def load_base_data():
         try:
             df = pd.read_csv(path, encoding=enc)
             df.columns = df.columns.str.strip()
-            return df.to_dict('records')
+            # no列を数値型に変換
+            if 'no' in df.columns:
+                df['no'] = pd.to_numeric(df['no'], errors='coerce')
+            return df.dropna(subset=['en', 'ja']).to_dict('records')
         except: continue
     return []
 
@@ -66,30 +69,31 @@ if 'wrong_words' not in st.session_state:
     except: pass
     st.session_state.wrong_words = from_gs
 
-# --- サイドバー：範囲設定 ---
-st.sidebar.title("設定")
-if st.session_state.all_words:
-    # 番号(no)の最小値と最大値を取得
-    nos = [int(w['no']) for w in st.session_state.all_words if 'no' in w]
-    if nos:
-        min_no, max_no = min(nos), max(nos)
-        range_select = st.sidebar.slider(
-            "出題範囲 (No.)",
-            min_value=min_no,
-            max_value=max_no,
-            value=(min_no, max_no)
-        )
-        # 範囲内の単語だけを抽出
-        st.session_state.word_list = [
-            w for w in st.session_state.all_words 
-            if range_select[0] <= int(w['no']) <= range_select[1]
-        ]
-    else:
-        st.session_state.word_list = st.session_state.all_words
-else:
-    st.session_state.word_list = []
+# --- サイドバー：設定 ---
+st.sidebar.title("🛠 設定")
 
-# --- サイドバー：その他 ---
+# 1. 範囲設定
+if st.session_state.all_words:
+    nos = [int(w['no']) for w in st.session_state.all_words if 'no' in w and not pd.isna(w['no'])]
+    if nos:
+        min_v, max_v = min(nos), max(nos)
+        # スライダーの値が変わったら問題をリセットするための仕組み
+        range_select = st.sidebar.slider("出題範囲 (No.)", min_v, max_v, (min_v, max_v), key="range_slider")
+        
+        # フィルタリング
+        filtered_words = [w for w in st.session_state.all_words if range_select[0] <= int(w['no']) <= range_select[1]]
+        
+        # 範囲が以前と変わったかチェック
+        if 'last_range' not in st.session_state or st.session_state.last_range != range_select:
+            st.session_state.last_range = range_select
+            if 'current_question' in st.session_state:
+                del st.session_state.current_question # 範囲が変わったら今の問題を破棄
+    else:
+        filtered_words = st.session_state.all_words
+else:
+    filtered_words = []
+
+# 2. モード選択
 wrong_count = len(st.session_state.wrong_words)
 st.sidebar.metric("現在の復習単語数", f"{wrong_count} 語")
 mode = st.sidebar.radio("モード:", ["全問", "復習"], horizontal=True)
@@ -99,15 +103,19 @@ if st.session_state.last_mode != mode:
     st.session_state.last_mode = mode
     if 'current_question' in st.session_state: del st.session_state.current_question
 
-# 出題リスト決定
-active_list = st.session_state.wrong_words if (mode == "復習" and st.session_state.wrong_words) else st.session_state.word_list
+# --- 出題リストの決定 ---
+if mode == "復習" and st.session_state.wrong_words:
+    active_list = st.session_state.wrong_words
+else:
+    active_list = filtered_words
 
+# --- 問題作成関数 ---
 def next_question():
     if not active_list:
         st.session_state.current_question = None
     else:
         target = random.choice(active_list)
-        # 選択肢は全範囲から持ってくる（難易度維持のため）
+        # 選択肢は全単語から（難易度を保つため）
         others = [w for w in st.session_state.all_words if w['en'] != target['en']]
         choices = random.sample(others, min(len(others), 3)) + [target]
         random.shuffle(choices)
@@ -118,14 +126,13 @@ if 'current_question' not in st.session_state:
 
 # --- メイン画面 ---
 if not st.session_state.all_words:
-    st.error("words.csvを読み込めませんでした。または 'no' 列がありません。")
+    st.error("words.csvが正しく読み込めていません。'no', 'en', 'ja' の列があるか確認してください。")
 elif st.session_state.current_question is None:
-    st.warning("この範囲に単語がないか、復習単語がありません。")
+    st.warning("選択された範囲に単語がありません。")
 else:
     q = st.session_state.current_question
-    # No.を表示
-    no_display = f"No.{q['target']['no']} " if 'no' in q['target'] else ""
-    st.markdown(f"### {no_display}")
+    no_txt = f"No.{int(q['target']['no'])} " if 'no' in q['target'] else ""
+    st.markdown(f"### {no_txt}")
     st.markdown(f"# **{q['target']['en']}**")
 
     if not q["answered"]:
@@ -153,7 +160,6 @@ else:
                 st.session_state.wrong_words.append(q['target'])
                 add_wrong_word_to_gs(q['target'])
             st.rerun()
-
     else:
         if st.session_state.result_type == "correct":
             st.success(f"🎯 正解！: {q['target']['ja']}")
@@ -163,7 +169,7 @@ else:
             st.error(f"❌ 不正解... 正解は: {q['target']['ja']}")
         
         st.write("---")
-        st.write("💡 **今回の単語を復習:**")
+        st.write("💡 **今回の復習:**")
         for c in q["choices"]:
             mark = "✅" if c['en'] == q['target']['en'] else "・"
             st.write(f"{mark} **{c['en']}** : {c['ja']}")
