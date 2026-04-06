@@ -48,42 +48,32 @@ def sync_result(word_dict, res_type):
         en = word_dict['en']
         cells = sheet.col_values(1)
         
-        # 列構成: 1:en, 2:ja, 3:correct_count, 4:no, 5:total_shown, 6:is_done(1=完了, 0=未完)
         if en in cells:
             row_idx = cells.index(en) + 1
             row_data = sheet.row_values(row_idx)
-            
-            # 1. 出題回数更新 (5列目)
+            # 出題回数(5列目)
             shown_val = row_data[4] if len(row_data) >= 5 else 0
             new_shown = int(float(shown_val)) + 1 if str(shown_val).replace('.','').isdigit() else 1
             sheet.update_cell(row_idx, 5, new_shown)
 
-            # 2. 正解/不正解の処理
             if res_type == 'ok':
                 val = row_data[2] if len(row_data) >= 3 else 0
                 curr = int(float(val)) if str(val).replace('.','').isdigit() else 0
                 new_count = curr + 1
-                
                 if new_count >= 5:
                     sheet.update_cell(row_idx, 3, 5)
-                    sheet.update_cell(row_idx, 6, 1) # 「完了」フラグを立てる
+                    sheet.update_cell(row_idx, 6, 1) # 完了
                 else:
                     sheet.update_cell(row_idx, 3, new_count)
             else:
-                # 間違えたら「未完了」に戻して正解数リセット
                 sheet.update_cell(row_idx, 3, 0)
                 sheet.update_cell(row_idx, 6, 0)
         else:
-            # 新規登録（まだシートにない単語）
             try: word_no = int(float(word_dict.get('no', 0)))
             except: word_no = 0
-            
-            if res_type == 'ok':
-                # 初回で正解した場合は「完了」として登録（復習リストには出さない）
-                sheet.append_row([en, word_dict['ja'], 5, word_no, 1, 1])
-            else:
-                # 間違えた場合は「未完了」として登録
-                sheet.append_row([en, word_dict['ja'], 0, word_no, 1, 0])
+            is_ok = 1 if res_type == 'ok' else 0
+            # 完了状態で登録するかどうか：初回正解は完了(5回分)として扱う
+            sheet.append_row([en, word_dict['ja'], 5 if is_ok else 0, word_no, 1, 1 if is_ok else 0])
     except: pass
     st.cache_data.clear()
 
@@ -105,7 +95,6 @@ if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
 
 gs_rows = load_gs_data()
-# 「完了(is_done=1)」ではないものだけを復習リストとする
 pending_words = [d for d in gs_rows if str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')): d for d in gs_rows if d.get('en')}
 
@@ -118,14 +107,42 @@ st.sidebar.metric("現在の復習が必要な単語数", f"{len(pending_words)}
 
 if mode != "単語帳":
     nos = [int(w['no']) for w in st.session_state.all_words] or [0]
-    s_no = st.sidebar.number_input("開始No.", min(nos), max(nos), min(nos))
-    e_no = st.sidebar.number_input("終了No.", min(nos), max(nos), max(nos))
-    quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
     
+    # 範囲変更を検知するための仕組み
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        s_no = st.number_input("開始No.", min(nos), max(nos), min(nos))
+    with col2:
+        e_no = st.number_input("終了No.", min(nos), max(nos), max(nos))
+    
+    quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
+
+    # 設定が変わった場合に問題をリセットする処理
+    current_settings = f"{s_no}-{e_no}-{quiz_target}-{mode}"
+    if 'last_settings' in st.session_state and st.session_state.last_settings != current_settings:
+        st.session_state.reset_q = True
+    st.session_state.last_settings = current_settings
+
     if quiz_target == "復習のみ":
         active_list = pending_words
     else:
         active_list = [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
+
+    # --- 出題頻度のみリセットボタン ---
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
+        sheet = get_sheet()
+        if sheet:
+            # 5列目(total_shown)をすべて0に更新
+            rows = len(sheet.get_all_values())
+            if rows > 1:
+                cell_list = sheet.range(2, 5, rows, 5)
+                for cell in cell_list: cell.value = 0
+                sheet.update_cells(cell_list)
+            st.cache_data.clear()
+            st.session_state.reset_q = True # 問題もリセット
+            st.success("頻度をリセットしました")
+            st.rerun()
 
 # --- 6. メインコンテンツ ---
 if mode == "単語帳":
@@ -135,13 +152,16 @@ if mode == "単語帳":
 else:
     if 'q' not in st.session_state or st.session_state.get('reset_q'):
         if not active_list:
-            st.warning("対象となる単語がありません。")
+            st.warning("対象となる単語がありません。範囲を広げるか、復習を完了させてください。")
             st.stop()
         
+        # 重み付け: 出題回数が少ないほど優先
         weights = []
         for w in active_list:
             shown_count = gs_dict.get(str(w['en']), {}).get('total_shown', 0)
-            weights.append(1.0 / (float(shown_count) + 1.0) if str(shown_count).replace('.','').isdigit() else 1.0)
+            try: s_num = float(shown_count)
+            except: s_num = 0.0
+            weights.append(1.0 / (s_num + 1.0))
         
         target = random.choices(active_list, weights=weights, k=1)[0]
         others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], min(len(st.session_state.all_words)-1, 3))
@@ -156,17 +176,13 @@ else:
         
     matching_gs = gs_dict.get(str(q['t']['en']), {})
     status_display = ""
-    
     if matching_gs:
-        # 正解数と完了状態の表示
         is_done = str(matching_gs.get('is_done', 0)) == '1'
-        if is_done:
-            status_display = " | ✅ 完了済み"
+        if is_done: status_display = " | ✅ 完了済み"
         else:
             raw_ok = matching_gs.get('count', 0)
             curr_ok = int(float(raw_ok)) if str(raw_ok).replace('.','').isdigit() else 0
             status_display = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
-        
         total_s = matching_gs.get('total_shown', 0)
         status_display += f" | 📊 学習: {total_s}回目"
     else:
@@ -174,7 +190,6 @@ else:
 
     st.write(f"No.{display_no}{status_display}")
     
-    # ... (以下、クイズ表示とボタン処理は前回のコードと同じ) ...
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
 
@@ -189,7 +204,6 @@ else:
                     st.session_state.res_type = "ok" if is_correct else "ng"
                     sync_result(q['t'], st.session_state.res_type)
                     st.rerun()
-        
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True
             st.session_state.res_type = "unknown"
