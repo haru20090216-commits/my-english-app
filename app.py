@@ -7,7 +7,7 @@ import json
 import os
 
 # --- ページ設定 ---
-st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
+st.set_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
 # --- Googleスプレッドシート連携 ---
 @st.cache_resource
@@ -31,7 +31,7 @@ def add_wrong_word_to_gs(word_dict):
             existing = sheet.col_values(1)
             if word_dict['en'] not in existing:
                 no_val = word_dict.get('no', 0)
-                sheet.append_row([word_dict['en'], word_dict['ja'], 0, int(no_val)])
+                sheet.append_row([word_dict['en'], word_dict['ja'], 0, int(float(no_val))])
         except: pass
 
 def update_correct_count_in_gs(en_word):
@@ -58,7 +58,6 @@ def load_base_data():
         try:
             df = pd.read_csv(path, encoding=enc)
             df.columns = df.columns.str.strip()
-            # 番号列がない場合や壊れている場合への対策
             if 'no' not in df.columns:
                 df['no'] = range(1, len(df) + 1)
             df['no'] = pd.to_numeric(df['no'], errors='coerce').fillna(0)
@@ -88,22 +87,18 @@ filtered_words = []
 if mode == "クイズ":
     st.sidebar.markdown("---")
     st.sidebar.title("🛠 出題設定")
-    
     if st.session_state.all_words:
-        # 番号の最小値と最大値を安全に取得
         nos = [int(w['no']) for w in st.session_state.all_words]
         min_n, max_n = min(nos), max(nos)
         start_no = st.sidebar.number_input("開始番号", min_n, max_n, min_n)
         end_no = st.sidebar.number_input("終了番号", min_n, max_n, max_n)
         filtered_words = [w for w in st.session_state.all_words if start_no <= int(w['no']) <= end_no]
-        
         if 'last_range' not in st.session_state or st.session_state.last_range != (start_no, end_no):
             st.session_state.last_range = (start_no, end_no)
             if 'current_question' in st.session_state: del st.session_state.current_question
     
     st.sidebar.metric("現在の復習単語数", f"{len(st.session_state.wrong_words)} 語")
     quiz_mode = st.sidebar.radio("出題対象:", ["全問", "復習"], horizontal=True)
-    
     if 'last_quiz_mode' not in st.session_state or st.session_state.last_quiz_mode != quiz_mode:
         st.session_state.last_quiz_mode = quiz_mode
         if 'current_question' in st.session_state: del st.session_state.current_question
@@ -118,33 +113,24 @@ if mode == "辞書":
             with st.expander(f"📌 {res['en']}"):
                 st.write(f"意味: {res['ja']} (No.{int(res['no'])})")
     else:
-        st.info("英単語を入力してください。CSVデータから検索します。")
+        st.info("英単語を入力してください。")
 
 elif mode == "クイズ":
-    # 出題リストの決定
-    if quiz_mode == "復習":
-        active_list = st.session_state.wrong_words
-    else:
-        active_list = filtered_words
+    active_list = st.session_state.wrong_words if (quiz_mode == "復習") else filtered_words
 
-    # 問題の生成
     if 'current_question' not in st.session_state:
         if not active_list:
             st.session_state.current_question = None
         else:
             target = random.choice(active_list)
-            # 選択肢は全データからランダムに取得（全データがなければ復習用データから）
             pool = st.session_state.all_words if st.session_state.all_words else active_list
             others = [w for w in pool if w['en'] != target['en']]
             choices = random.sample(others, min(len(others), 3)) + [target]
             random.shuffle(choices)
             st.session_state.current_question = {"target": target, "choices": choices, "answered": False}
 
-    # 表示処理
     if st.session_state.current_question is None:
-        st.warning("⚠️ 出題できる単語がありません。")
-        st.write("- 「全問」モードの場合：サイドバーの開始・終了番号を見直してください。")
-        st.write("- 「復習」モードの場合：まだ復習リストに単語が登録されていません。")
+        st.warning("⚠️ 出題できる単語がありません。設定を確認してください。")
     else:
         q = st.session_state.current_question
         t = q['target']
@@ -180,6 +166,7 @@ elif mode == "クイズ":
                 st.session_state.wrong_words = load_wrong_words()
                 st.rerun()
         else:
+            # 回答後の表示（ボタンを上に配置）
             if st.session_state.res_type == "ok":
                 st.success(f"🎯 正解: {t['ja']}")
             elif st.session_state.res_type == "unknown":
@@ -187,11 +174,13 @@ elif mode == "クイズ":
             else:
                 st.error(f"❌ 不正解... 正解は: {t['ja']}")
             
+            # 【ここが修正ポイント】ボタンを先に表示
+            if st.button("次の問題へ ➡️", use_container_width=True, type="primary"):
+                del st.session_state.current_question
+                st.rerun()
+            
             st.write("---")
+            # 選択肢のまとめを下に表示
             for c in q["choices"]:
                 m = "✅" if c['en'] == t['en'] else "・"
                 st.write(f"{m} **{c['en']}** : {c['ja']}")
-            
-            if st.button("次の問題へ ➡️", use_container_width=True):
-                del st.session_state.current_question
-                st.rerun()
