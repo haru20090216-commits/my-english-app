@@ -63,8 +63,6 @@ def sync_result(word_dict, res_type):
         if en_target in all_col1:
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
-            
-            # 出題回数更新
             try:
                 raw_shown = row_data[4] if len(row_data) >= 5 else 0
                 old_shown = int(float(str(raw_shown).strip())) if str(raw_shown).strip() else 0
@@ -221,16 +219,15 @@ else:
             msg = "💡 答え" if st.session_state.res_type == "unknown" else "❌ 残念..."
             st.error(f"{msg}\n\n正解は: {ans_text}")
         
-        # --- 選択肢の回答を表示するセクション ---
-        st.markdown("### 📝 選択肢のまとめ")
-        for choice in q["c"]:
-            # 正解にはチェックマーク、それ以外は中点
-            is_target = (str(choice['en']).strip() == str(q['t']['en']).strip())
-            mark = "✅" if is_target else "・"
-            # 常に「英語：意味」の形式で表示
-            st.write(f"{mark} **{choice['en']}** : {choice['ja']}")
-
-        st.divider()
+        # --- 「次の問題へ」ボタンをリストの上に配置 ---
         if st.button("次の問題へ ➡️", use_container_width=True):
             st.session_state.reset_q = True
             st.rerun()
+
+        st.write("") # スペース
+        # --- 選択肢の回答リスト ---
+        for choice in q["c"]:
+            is_target = (str(choice['en']).strip() == str(q['t']['en']).strip())
+            mark = "✅" if is_target else "・"
+            st.write(f"{mark} **{choice['en']}** : {choice['ja']}")
+        st.divider()
