@@ -9,7 +9,19 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. Googleスプレッドシート連携 (高速化キャッシュ設定) ---
+# --- 2. スタイル設定 (ボタンの色をカスタマイズ) ---
+def set_button_color(color_code):
+    st.markdown(f"""
+        <style>
+        div.stButton > button:first-child {{
+            background-color: {color_code} !important;
+            color: white !important;
+            border: None !important;
+        }}
+        </style>
+    """, unsafe_allow_html=True)
+
+# --- 3. Googleスプレッドシート連携 ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -22,7 +34,7 @@ def get_sheet():
     except:
         return None
 
-@st.cache_data(ttl=300) # 5分間キャッシュで読み込みを爆速に
+@st.cache_data(ttl=300)
 def load_gs_data():
     sheet = get_sheet()
     if sheet:
@@ -32,9 +44,6 @@ def load_gs_data():
     return []
 
 def sync_result(word_dict, res_type):
-    """
-    res_type: 'ok' (正解), 'ng' (不正解), 'unknown' (わからない)
-    """
     sheet = get_sheet()
     if not sheet: return
     try:
@@ -46,7 +55,6 @@ def sync_result(word_dict, res_type):
                 if curr + 1 >= 5: sheet.delete_rows(cell.row)
                 else: sheet.update_cell(cell.row, 3, curr + 1)
         else:
-            # 不正解または「わからない」はリストに追加
             cells = sheet.col_values(1)
             if en not in cells:
                 sheet.append_row([en, word_dict['ja'], 0, int(float(word_dict.get('no', 0)))])
@@ -66,14 +74,14 @@ def load_csv():
         except: continue
     return []
 
-# --- 3. データ準備 ---
+# --- 4. データ準備 ---
 if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
 
 wrong_data = load_gs_data()
 st.session_state.wrong_words = [d for d in wrong_data if d.get('en')]
 
-# --- 4. メイン処理 ---
+# --- 5. メイン処理 ---
 st.sidebar.title("🔍 メニュー")
 mode = st.sidebar.radio("モード", ["クイズ", "辞書"], horizontal=True)
 
@@ -98,7 +106,6 @@ else:
             st.warning("単語がありません")
             st.stop()
         target = random.choice(active_list)
-        # 選択肢は全単語から取得
         pool = st.session_state.all_words if st.session_state.all_words else active_list
         others = random.sample([w for w in pool if w['en'] != target['en']], min(len(pool)-1, 3))
         choices = others + [target]
@@ -107,7 +114,6 @@ else:
         st.session_state.reset_q = False
 
     q = st.session_state.q
-    # 復習モードなら「あと何回」を表示
     count_info = ""
     if quiz_target == "復習":
         c = q['t'].get('count', 0)
@@ -127,22 +133,24 @@ else:
                     sync_result(q['t'], st.session_state.res_type)
                     st.rerun()
         
-        # --- わからないボタン ---
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True
             st.session_state.res_type = "unknown"
             sync_result(q['t'], "unknown")
             st.rerun()
     else:
-        # 回答後の表示
+        # 回答後の表示とボタン色設定
         if st.session_state.res_type == "ok":
+            set_button_color("#28a745")  # 緑色
             st.success(f"🎯 正解: {q['t']['ja']}")
-        elif st.session_state.res_type == "unknown":
-            st.warning(f"💡 意味: {q['t']['ja']}")
         else:
-            st.error(f"❌ 正解: {q['t']['ja']}")
+            set_button_color("#dc3545")  # 赤色
+            if st.session_state.res_type == "unknown":
+                st.warning(f"💡 意味: {q['t']['ja']}")
+            else:
+                st.error(f"❌ 正解: {q['t']['ja']}")
         
-        if st.button("次の問題へ ➡️", use_container_width=True, type="primary"):
+        if st.button("次の問題へ ➡️", use_container_width=True):
             st.session_state.reset_q = True
             st.rerun()
 
