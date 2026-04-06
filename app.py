@@ -33,7 +33,7 @@ def get_sheet():
         return gspread.authorize(creds).open_by_key(st.secrets["spreadsheet_id"]).sheet1
     except: return None
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_gs_data():
     sheet = get_sheet()
     if not sheet: return []
@@ -48,24 +48,31 @@ def sync_result(word_dict, res_type):
         en = word_dict['en']
         cells = sheet.col_values(1)
         
-        if res_type == 'ok':
-            if en in cells:
-                row_idx = cells.index(en) + 1
+        if en in cells:
+            row_idx = cells.index(en) + 1
+            # 出題回数をカウントアップ (5列目)
+            try:
+                # 5列目を取得。なければ0
+                row_data = sheet.row_values(row_idx)
+                shown_val = row_data[4] if len(row_data) >= 5 else 0
+                new_shown = (int(shown_val) if str(shown_val).isdigit() else 0) + 1
+                sheet.update_cell(row_idx, 5, new_shown)
+            except: pass
+
+            if res_type == 'ok':
                 val = sheet.cell(row_idx, 3).value
                 curr = int(val) if val and str(val).isdigit() else 0
                 if curr + 1 >= 5:
                     sheet.delete_rows(row_idx)
                 else:
                     sheet.update_cell(row_idx, 3, curr + 1)
-        else:
-            if en not in cells:
-                # 番号を安全に数値化して保存
-                try: word_no = int(float(word_dict.get('no', 0)))
-                except: word_no = 0
-                sheet.append_row([en, word_dict['ja'], 0, word_no])
             else:
-                row_idx = cells.index(en) + 1
-                sheet.update_cell(row_idx, 3, 0)
+                sheet.update_cell(row_idx, 3, 0) 
+        else:
+            try: word_no = int(float(word_dict.get('no', 0)))
+            except: word_no = 0
+            # 新規: [en, ja, 正解数, no, 出題回数]
+            sheet.append_row([en, word_dict['ja'], 0, word_no, 1])
     except: pass
     st.cache_data.clear()
 
@@ -77,7 +84,6 @@ def load_csv():
         try:
             df = pd.read_csv(path, encoding=enc)
             df.columns = df.columns.str.strip()
-            # no列を数値化、エラーは0にする
             df['no'] = pd.to_numeric(df.get('no', 0), errors='coerce').fillna(0)
             return df.dropna(subset=['en', 'ja']).to_dict('records')
         except: continue
@@ -88,26 +94,42 @@ if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
 
 gs_rows = load_gs_data()
-st.session_state.wrong_words = [d for d in gs_rows if d.get('en')]
+gs_dict = {d['en']: d for d in gs_rows if d.get('en')}
 
 # --- 5. サイドバー ---
 st.sidebar.title("🎓 学習メニュー")
 mode = st.sidebar.selectbox("モード", ["英→日クイズ", "日→英クイズ", "単語帳"])
 
 st.sidebar.divider()
-st.sidebar.metric("現在の復習が必要な単語数", f"{len(st.session_state.wrong_words)} 語")
+st.sidebar.metric("現在の復習が必要な単語数", f"{len(gs_rows)} 語")
 
 if mode != "単語帳":
-    # all_wordsが空の場合のガード
-    if not st.session_state.all_words:
-        st.error("CSVデータが読み込めません。GitHubに words.csv があるか確認してください。")
-        st.stop()
-    
     nos = [int(w['no']) for w in st.session_state.all_words]
     s_no = st.sidebar.number_input("開始No.", min(nos), max(nos), min(nos))
     e_no = st.sidebar.number_input("終了No.", min(nos), max(nos), max(nos))
-    quiz_target = st.sidebar.radio("出題対象", ["全問", "復習"], horizontal=True)
-    active_list = st.session_state.wrong_words if quiz_target == "復習" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
+    quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
+    
+    if quiz_target == "復習のみ":
+        active_list = [d for d in gs_rows if d.get('en')]
+    else:
+        active_list = [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
+
+# 出題順序リセットボタン (復習データは維持)
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
+    sheet = get_sheet()
+    if sheet:
+        # 5列目（出題回数）をすべて0にする
+        rows = len(sheet.get_all_values())
+        if rows > 1:
+            # 範囲を指定して一括更新（速度優先）
+            cell_list = sheet.range(2, 5, rows, 5)
+            for cell in cell_list:
+                cell.value = 0
+            sheet.update_cells(cell_list)
+        st.cache_data.clear()
+        st.success("出題頻度をリセットしました！")
+        st.rerun()
 
 # --- 6. メインコンテンツ ---
 if mode == "単語帳":
@@ -119,31 +141,36 @@ else:
         if not active_list:
             st.warning("対象となる単語がありません。")
             st.stop()
-        target = random.choice(active_list)
-        others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], min(len(st.session_state.all_words)-1, 3))
+        
+        weights = []
+        for w in active_list:
+            # 出題回数(total_shown)を取得
+            shown_count = gs_dict.get(w['en'], {}).get('total_shown', 0)
+            weights.append(1.0 / (float(shown_count) + 1.0))
+        
+        target = random.choices(active_list, weights=weights, k=1)[0]
+        others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], 3)
         choices = others + [target]
         random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
         st.session_state.reset_q = False
 
     q = st.session_state.q
-    
-    # --- エラー対策済み表示部分 ---
-    try:
-        display_no = int(float(q['t'].get('no', 0)))
-    except:
-        display_no = 0
+    try: display_no = int(float(q['t'].get('no', 0)))
+    except: display_no = 0
         
-    matching_wrong = next((w for w in st.session_state.wrong_words if w['en'] == q['t']['en']), None)
+    matching_gs = gs_dict.get(q['t']['en'], {})
     count_display = ""
-    if matching_wrong:
-        curr_ok = matching_wrong.get('count', matching_wrong.get('正解数', 0))
-        try:
-            left = 5 - int(curr_ok)
-            count_display = f" 🔥 あと {max(0, left)} 回！"
-        except: pass
+    shown_display = ""
+    
+    if matching_gs:
+        curr_ok = matching_gs.get('count', matching_gs.get('正解数', 0))
+        left = 5 - int(curr_ok)
+        count_display = f" | 🔥 あと {max(0, left)} 回"
+        total_s = matching_gs.get('total_shown', 0)
+        shown_display = f" | 📊 学習: {total_s}回目"
 
-    st.write(f"No.{display_no}{count_display}")
+    st.write(f"No.{display_no}{count_display}{shown_display}")
     
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
