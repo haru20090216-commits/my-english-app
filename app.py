@@ -9,21 +9,17 @@ import os
 # --- ページ設定 ---
 st.set_page_config(page_title="英単語", layout="centered")
 
-# --- 超コンパクトCSS ---
+# --- CSSカスタマイズ (さらに凝縮) ---
 st.markdown("""
     <style>
-    /* 全体の余白を消す */
-    .main .block-container { padding: 0.5rem 1rem !important; }
-    /* ヘッダー類を小さく */
-    h1 { font-size: 1.4rem !important; margin: 0 !important; }
-    h2 { font-size: 1.2rem !important; margin: 0 !important; }
-    h3 { font-size: 0.9rem !important; margin: 0 !important; }
-    /* ボタンの隙間を詰める */
-    .stButton > button { height: 2.5rem !important; margin-bottom: -10px !important; font-size: 0.9rem !important; }
-    /* 間隔（Divider）を細く */
-    hr { margin: 0.5rem 0 !important; }
-    /* 復習単語数の表示を小さく */
-    [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
+    .main .block-container { padding: 0.3rem 1rem !important; }
+    /* 問題文のフォントサイズを2サイズアップ */
+    .mondai-text { font-size: 2.2rem !important; font-weight: bold; margin: 0.2rem 0 !important; line-height: 1.2; }
+    h3 { font-size: 0.8rem !important; margin: 0 !important; opacity: 0.7; }
+    .stButton > button { height: 2.4rem !important; margin-bottom: -12px !important; font-size: 0.9rem !important; }
+    hr { margin: 0.4rem 0 !important; }
+    /* 選択肢まとめのテキストサイズ */
+    .matome-text { font-size: 0.75rem !important; line-height: 1.1; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -126,7 +122,9 @@ elif main_mode == "クイズ":
         q = st.session_state.current_q
         t = q['target']
         st.write(f"No.{t.get('no', '?')}")
-        st.markdown(f"## {t['en'] if direction=='英→日' else t['ja']}")
+        # 問題文を大きく表示
+        q_label = t['en'] if direction=='英→日' else t['ja']
+        st.markdown(f'<div class="mondai-text">{q_label}</div>', unsafe_allow_html=True)
 
         if not q["answered"]:
             cols = st.columns(2)
@@ -148,17 +146,16 @@ elif main_mode == "クイズ":
                 add_wrong_word_to_gs(t)
                 st.rerun()
         else:
-            # 回答後の超コンパクト表示
+            # 回答直後に「次へ」ボタンを配置（押しやすさ重視）
             st.write(f"### {st.session_state.res} {t['en']} = {t['ja']}")
+            if st.button("次へ ➡️", use_container_width=True, type="primary"):
+                del st.session_state.current_q
+                st.rerun()
             
-            # 選択肢まとめを1行（4カラム）で表示
+            # その下に他の回答（選択肢）を配置
             st.markdown("---")
             m_cols = st.columns(4)
             for i, c in enumerate(q["choices"]):
                 with m_cols[i]:
-                    st.caption(f"**{c['en']}**")
-                    st.caption(f"{c['ja']}")
-
-            if st.button("次へ", use_container_width=True):
-                del st.session_state.current_q
-                st.rerun()
+                    mark = "✅" if c['en'] == t['en'] else ""
+                    st.markdown(f'<div class="matome-text">{mark}<b>{c["en"]}</b><br>{c["ja"]}</div>', unsafe_allow_html=True)
