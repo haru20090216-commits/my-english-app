@@ -6,8 +6,8 @@ from google.oauth2.service_account import Credentials
 import json
 import os
 
-# --- ページ設定 ---
-st.set_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
+# --- ページ設定 (修正箇所) ---
+st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
 # --- Googleスプレッドシート連携 ---
 @st.cache_resource
@@ -166,7 +166,6 @@ elif mode == "クイズ":
                 st.session_state.wrong_words = load_wrong_words()
                 st.rerun()
         else:
-            # 回答後の表示（ボタンを上に配置）
             if st.session_state.res_type == "ok":
                 st.success(f"🎯 正解: {t['ja']}")
             elif st.session_state.res_type == "unknown":
@@ -174,13 +173,13 @@ elif mode == "クイズ":
             else:
                 st.error(f"❌ 不正解... 正解は: {t['ja']}")
             
-            # 【ここが修正ポイント】ボタンを先に表示
+            # 「次の問題へ」を先に表示
             if st.button("次の問題へ ➡️", use_container_width=True, type="primary"):
                 del st.session_state.current_question
                 st.rerun()
             
             st.write("---")
-            # 選択肢のまとめを下に表示
+            # 選択肢のまとめを表示
             for c in q["choices"]:
                 m = "✅" if c['en'] == t['en'] else "・"
                 st.write(f"{m} **{c['en']}** : {c['ja']}")
