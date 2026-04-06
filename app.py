@@ -48,33 +48,42 @@ def sync_result(word_dict, res_type):
         en = word_dict['en']
         cells = sheet.col_values(1)
         
+        # 列構成: 1:en, 2:ja, 3:correct_count, 4:no, 5:total_shown, 6:is_done(1=完了, 0=未完)
         if en in cells:
             row_idx = cells.index(en) + 1
-            # 出題回数の更新 (5列目)
-            try:
-                row_data = sheet.row_values(row_idx)
-                shown_val = row_data[4] if len(row_data) >= 5 else 0
-                new_shown = int(float(shown_val)) + 1 if str(shown_val).replace('.','').isdigit() else 1
-                sheet.update_cell(row_idx, 5, new_shown)
-            except: pass
+            row_data = sheet.row_values(row_idx)
+            
+            # 1. 出題回数更新 (5列目)
+            shown_val = row_data[4] if len(row_data) >= 5 else 0
+            new_shown = int(float(shown_val)) + 1 if str(shown_val).replace('.','').isdigit() else 1
+            sheet.update_cell(row_idx, 5, new_shown)
 
+            # 2. 正解/不正解の処理
             if res_type == 'ok':
-                val = sheet.cell(row_idx, 3).value
-                curr = int(float(val)) if val and str(val).replace('.','').isdigit() else 0
-                if curr + 1 >= 5:
-                    sheet.delete_rows(row_idx) # 5回達成で卒業
+                val = row_data[2] if len(row_data) >= 3 else 0
+                curr = int(float(val)) if str(val).replace('.','').isdigit() else 0
+                new_count = curr + 1
+                
+                if new_count >= 5:
+                    sheet.update_cell(row_idx, 3, 5)
+                    sheet.update_cell(row_idx, 6, 1) # 「完了」フラグを立てる
                 else:
-                    sheet.update_cell(row_idx, 3, curr + 1)
+                    sheet.update_cell(row_idx, 3, new_count)
             else:
-                sheet.update_cell(row_idx, 3, 0) # 不正解でリセット
+                # 間違えたら「未完了」に戻して正解数リセット
+                sheet.update_cell(row_idx, 3, 0)
+                sheet.update_cell(row_idx, 6, 0)
         else:
-            # スプレッドシートにない単語が「全問モード」等で出た場合
+            # 新規登録（まだシートにない単語）
             try: word_no = int(float(word_dict.get('no', 0)))
             except: word_no = 0
-            # 初回登録: [en, ja, 正解数, no, 出題回数]
-            # 正解した場合は正解数1、それ以外は0で登録
-            init_ok = 1 if res_type == 'ok' else 0
-            sheet.append_row([en, word_dict['ja'], init_ok, word_no, 1])
+            
+            if res_type == 'ok':
+                # 初回で正解した場合は「完了」として登録（復習リストには出さない）
+                sheet.append_row([en, word_dict['ja'], 5, word_no, 1, 1])
+            else:
+                # 間違えた場合は「未完了」として登録
+                sheet.append_row([en, word_dict['ja'], 0, word_no, 1, 0])
     except: pass
     st.cache_data.clear()
 
@@ -96,6 +105,8 @@ if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
 
 gs_rows = load_gs_data()
+# 「完了(is_done=1)」ではないものだけを復習リストとする
+pending_words = [d for d in gs_rows if str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')): d for d in gs_rows if d.get('en')}
 
 # --- 5. サイドバー ---
@@ -103,7 +114,7 @@ st.sidebar.title("🎓 学習メニュー")
 mode = st.sidebar.selectbox("モード", ["英→日クイズ", "日→英クイズ", "単語帳"])
 
 st.sidebar.divider()
-st.sidebar.metric("現在の復習が必要な単語数", f"{len(gs_rows)} 語")
+st.sidebar.metric("現在の復習が必要な単語数", f"{len(pending_words)} 語")
 
 if mode != "単語帳":
     nos = [int(w['no']) for w in st.session_state.all_words] or [0]
@@ -112,23 +123,9 @@ if mode != "単語帳":
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
     
     if quiz_target == "復習のみ":
-        active_list = [d for d in gs_rows if d.get('en')]
+        active_list = pending_words
     else:
         active_list = [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
-
-# 出題順序リセットボタン (復習データは維持)
-st.sidebar.markdown("---")
-if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
-    sheet = get_sheet()
-    if sheet:
-        rows = len(sheet.get_all_values())
-        if rows > 1:
-            cell_list = sheet.range(2, 5, rows, 5)
-            for cell in cell_list: cell.value = 0
-            sheet.update_cells(cell_list)
-        st.cache_data.clear()
-        st.success("出題頻度をリセットしました！")
-        st.rerun()
 
 # --- 6. メインコンテンツ ---
 if mode == "単語帳":
@@ -141,13 +138,10 @@ else:
             st.warning("対象となる単語がありません。")
             st.stop()
         
-        # 重み付け選択: 出題回数が少ないほど選ばれやすく
         weights = []
         for w in active_list:
             shown_count = gs_dict.get(str(w['en']), {}).get('total_shown', 0)
-            try: s_num = float(shown_count)
-            except: s_num = 0.0
-            weights.append(1.0 / (s_num + 1.0))
+            weights.append(1.0 / (float(shown_count) + 1.0) if str(shown_count).replace('.','').isdigit() else 1.0)
         
         target = random.choices(active_list, weights=weights, k=1)[0]
         others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], min(len(st.session_state.all_words)-1, 3))
@@ -161,26 +155,26 @@ else:
     except: display_no = 0
         
     matching_gs = gs_dict.get(str(q['t']['en']), {})
-    count_display = ""
-    shown_display = ""
+    status_display = ""
     
-    # スプレッドシートにある場合のみ詳細を表示
     if matching_gs:
-        raw_ok = matching_gs.get('count', matching_gs.get('正解数', 0))
-        try: curr_ok = int(float(raw_ok)) if str(raw_ok).replace('.','').isdigit() else 0
-        except: curr_ok = 0
-        count_display = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
+        # 正解数と完了状態の表示
+        is_done = str(matching_gs.get('is_done', 0)) == '1'
+        if is_done:
+            status_display = " | ✅ 完了済み"
+        else:
+            raw_ok = matching_gs.get('count', 0)
+            curr_ok = int(float(raw_ok)) if str(raw_ok).replace('.','').isdigit() else 0
+            status_display = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
         
-        raw_shown = matching_gs.get('total_shown', 0)
-        try: total_s = int(float(raw_shown)) if str(raw_shown).replace('.','').isdigit() else 0
-        except: total_s = 0
-        shown_display = f" | 📊 学習: {total_s}回目"
+        total_s = matching_gs.get('total_shown', 0)
+        status_display += f" | 📊 学習: {total_s}回目"
     else:
-        # 初見の単語（スプレッドシート未登録）の場合
-        shown_display = " | 📊 学習: 初回"
+        status_display = " | 📊 学習: 初回"
 
-    st.write(f"No.{display_no}{count_display}{shown_display}")
+    st.write(f"No.{display_no}{status_display}")
     
+    # ... (以下、クイズ表示とボタン処理は前回のコードと同じ) ...
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
 
