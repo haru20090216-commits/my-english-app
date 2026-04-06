@@ -9,18 +9,14 @@ import os
 # --- ページ設定 ---
 st.set_page_config(page_title="英単語", layout="centered")
 
-# --- CSSカスタマイズ (文字サイズ調整) ---
+# --- CSSカスタマイズ (スマホ最適化) ---
 st.markdown("""
     <style>
     .main .block-container { padding: 0.3rem 1rem !important; }
-    /* 問題文 */
     .mondai-text { font-size: 2.2rem !important; font-weight: bold; margin: 0.2rem 0 !important; line-height: 1.2; }
-    /* 補足情報の文字サイズ */
     h3 { font-size: 0.9rem !important; margin: 0 !important; opacity: 0.8; }
-    /* ボタン */
     .stButton > button { height: 2.5rem !important; margin-bottom: -12px !important; font-size: 1.0rem !important; }
     hr { margin: 0.4rem 0 !important; }
-    /* 【修正】他の回答（まとめ）の文字サイズをアップ */
     .matome-item { font-size: 0.95rem !important; line-height: 1.2; margin-bottom: 5px; }
     .matome-en { font-weight: bold; color: #1E88E5; }
     .matome-ja { font-size: 0.85rem !important; color: #555; }
@@ -142,20 +138,20 @@ elif main_mode == "クイズ":
                         else:
                             st.session_state.res = "❌"
                             add_wrong_word_to_gs(t)
+                        st.session_state.wrong_words = load_wrong_words()
                         st.rerun()
             if st.button("わからない", use_container_width=True):
                 q["answered"] = True
                 st.session_state.res = "❓"
                 add_wrong_word_to_gs(t)
+                st.session_state.wrong_words = load_wrong_words()
                 st.rerun()
         else:
-            # 回答表示
             st.write(f"### {st.session_state.res} {t['en']} = {t['ja']}")
             if st.button("次へ ➡️", use_container_width=True, type="primary"):
                 del st.session_state.current_q
                 st.rerun()
             
-            # 【修正】他の回答まとめを少し大きく、2列にして縦幅を抑える
             st.markdown("---")
             m_cols = st.columns(2)
             for i, c in enumerate(q["choices"]):
