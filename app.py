@@ -64,12 +64,11 @@ def sync_result(word_dict, res_type):
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
             
-            # 出題回数(5列目)の安全な取得
+            # 出題回数更新
             try:
                 raw_shown = row_data[4] if len(row_data) >= 5 else 0
                 old_shown = int(float(str(raw_shown).strip())) if str(raw_shown).strip() else 0
             except: old_shown = 0
-            
             sheet.update_cell(row_idx, 5, old_shown + 1)
 
             if res_type == 'ok':
@@ -77,16 +76,13 @@ def sync_result(word_dict, res_type):
                     raw_count = row_data[2] if len(row_data) >= 3 else 0
                     old_count = int(float(str(raw_count).strip())) if str(raw_count).strip() else 0
                 except: old_count = 0
-                
                 new_count = old_count + 1
                 if new_count >= 5:
-                    sheet.update_cell(row_idx, 3, 5)
-                    sheet.update_cell(row_idx, 6, 1)
+                    sheet.update_cell(row_idx, 3, 5); sheet.update_cell(row_idx, 6, 1)
                 else:
                     sheet.update_cell(row_idx, 3, new_count)
             else:
-                sheet.update_cell(row_idx, 3, 0)
-                sheet.update_cell(row_idx, 6, 0)
+                sheet.update_cell(row_idx, 3, 0); sheet.update_cell(row_idx, 6, 0)
         else:
             try: word_no = int(float(word_dict.get('no', 0)))
             except: word_no = 0
@@ -160,16 +156,11 @@ else:
             st.warning("対象となる単語がありません。")
             st.stop()
         
-        # 重み付けの安全な計算
         weights = []
         for w in active_list:
             match = gs_dict.get(str(w['en']).strip(), {})
-            raw_val = match.get('total_shown', 0)
-            try:
-                # 文字列が含まれていても安全に数値化
-                s_num = float(str(raw_val).strip()) if str(raw_val).strip() else 0.0
-            except:
-                s_num = 0.0
+            try: s_num = float(str(match.get('total_shown', 0)).strip())
+            except: s_num = 0.0
             weights.append(1.0 / (s_num + 1.0))
         
         target = random.choices(active_list, weights=weights, k=1)[0]
@@ -190,13 +181,10 @@ else:
         is_done = str(matching_gs.get('is_done', 0)) == '1'
         if is_done: status = " | ✅ 完了済み"
         else:
-            try:
-                curr_ok = int(float(str(matching_gs.get('count', 0)).strip()))
+            try: curr_ok = int(float(str(matching_gs.get('count', 0)).strip()))
             except: curr_ok = 0
             status = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
-        
-        try:
-            total_s = int(float(str(matching_gs.get('total_shown', 0)).strip()))
+        try: total_s = int(float(str(matching_gs.get('total_shown', 0)).strip()))
         except: total_s = 0
         status += f" | 📊 学習: {total_s}回目"
     else:
@@ -204,7 +192,6 @@ else:
 
     st.write(f"No.{display_no}{status}")
     
-    # ... (クイズ表示処理などは変更なし) ...
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
 
@@ -219,6 +206,11 @@ else:
                     st.session_state.res_type = "ok" if is_correct else "ng"
                     sync_result(q['t'], st.session_state.res_type)
                     st.rerun()
+        if st.button("❓ わからない", use_container_width=True):
+            q["ans"] = True
+            st.session_state.res_type = "unknown"
+            sync_result(q['t'], "unknown")
+            st.rerun()
     else:
         ans_text = f"{q['t']['en']} : {q['t']['ja']}"
         if st.session_state.res_type == "ok":
@@ -226,8 +218,19 @@ else:
             st.success(f"🎯 正解！\n\n{ans_text}")
         else:
             set_button_color("#dc3545")
-            st.error(f"❌ 残念...\n\n正解は: {ans_text}")
+            msg = "💡 答え" if st.session_state.res_type == "unknown" else "❌ 残念..."
+            st.error(f"{msg}\n\n正解は: {ans_text}")
         
+        # --- 選択肢の回答を表示するセクション ---
+        st.markdown("### 📝 選択肢のまとめ")
+        for choice in q["c"]:
+            # 正解にはチェックマーク、それ以外は中点
+            is_target = (str(choice['en']).strip() == str(q['t']['en']).strip())
+            mark = "✅" if is_target else "・"
+            # 常に「英語：意味」の形式で表示
+            st.write(f"{mark} **{choice['en']}** : {choice['ja']}")
+
+        st.divider()
         if st.button("次の問題へ ➡️", use_container_width=True):
             st.session_state.reset_q = True
             st.rerun()
