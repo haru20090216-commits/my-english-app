@@ -9,7 +9,7 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. スタイル設定 (判定色ボタン) ---
+# --- 2. スタイル設定 ---
 def set_button_color(color_code):
     st.markdown(f"""
         <style>
@@ -37,7 +37,9 @@ def get_sheet():
 def load_gs_data():
     sheet = get_sheet()
     if not sheet: return []
-    return sheet.get_all_records()
+    try:
+        return sheet.get_all_records()
+    except: return []
 
 def sync_result(word_dict, res_type):
     sheet = get_sheet()
@@ -51,22 +53,19 @@ def sync_result(word_dict, res_type):
                 row_idx = cells.index(en) + 1
                 val = sheet.cell(row_idx, 3).value
                 curr = int(val) if val and str(val).isdigit() else 0
-                new_count = curr + 1
-                
-                if new_count >= 5:
-                    sheet.delete_rows(row_idx) # 5回達成でリストから削除
+                if curr + 1 >= 5:
+                    sheet.delete_rows(row_idx)
                 else:
-                    sheet.update_cell(row_idx, 3, new_count)
+                    sheet.update_cell(row_idx, 3, curr + 1)
         else:
-            # 不正解または「わからない」
             if en not in cells:
-                # 新しく復習リストに追加
-                sheet.append_row([en, word_dict['ja'], 0, int(float(word_dict.get('no', 0)))])
+                # 番号を安全に数値化して保存
+                try: word_no = int(float(word_dict.get('no', 0)))
+                except: word_no = 0
+                sheet.append_row([en, word_dict['ja'], 0, word_no])
             else:
-                # すでにリストにある場合は正解数を0にリセット
                 row_idx = cells.index(en) + 1
                 sheet.update_cell(row_idx, 3, 0)
-                
     except: pass
     st.cache_data.clear()
 
@@ -78,7 +77,8 @@ def load_csv():
         try:
             df = pd.read_csv(path, encoding=enc)
             df.columns = df.columns.str.strip()
-            df['no'] = pd.to_numeric(df.get('no', range(1, len(df)+1)), errors='coerce').fillna(0)
+            # no列を数値化、エラーは0にする
+            df['no'] = pd.to_numeric(df.get('no', 0), errors='coerce').fillna(0)
             return df.dropna(subset=['en', 'ja']).to_dict('records')
         except: continue
     return []
@@ -98,7 +98,12 @@ st.sidebar.divider()
 st.sidebar.metric("現在の復習が必要な単語数", f"{len(st.session_state.wrong_words)} 語")
 
 if mode != "単語帳":
-    nos = [int(w['no']) for w in st.session_state.all_words] or [0]
+    # all_wordsが空の場合のガード
+    if not st.session_state.all_words:
+        st.error("CSVデータが読み込めません。GitHubに words.csv があるか確認してください。")
+        st.stop()
+    
+    nos = [int(w['no']) for w in st.session_state.all_words]
     s_no = st.sidebar.number_input("開始No.", min(nos), max(nos), min(nos))
     e_no = st.sidebar.number_input("終了No.", min(nos), max(nos), max(nos))
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習"], horizontal=True)
@@ -115,8 +120,7 @@ else:
             st.warning("対象となる単語がありません。")
             st.stop()
         target = random.choice(active_list)
-        pool = st.session_state.all_words
-        others = random.sample([w for w in pool if w['en'] != target['en']], 3)
+        others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], min(len(st.session_state.all_words)-1, 3))
         choices = others + [target]
         random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
@@ -124,18 +128,22 @@ else:
 
     q = st.session_state.q
     
-    # 残り回数の表示
+    # --- エラー対策済み表示部分 ---
+    try:
+        display_no = int(float(q['t'].get('no', 0)))
+    except:
+        display_no = 0
+        
     matching_wrong = next((w for w in st.session_state.wrong_words if w['en'] == q['t']['en']), None)
     count_display = ""
     if matching_wrong:
-        # シートの列名に合わせて 'count' か '正解数' を取得
         curr_ok = matching_wrong.get('count', matching_wrong.get('正解数', 0))
         try:
             left = 5 - int(curr_ok)
             count_display = f" 🔥 あと {max(0, left)} 回！"
         except: pass
 
-    st.write(f"No.{int(float(q['t']['no']))}{count_display}")
+    st.write(f"No.{display_no}{count_display}")
     
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
@@ -158,13 +166,12 @@ else:
             sync_result(q['t'], "unknown")
             st.rerun()
     else:
-        # 回答後の表示
         ans_text = f"{q['t']['en']} : {q['t']['ja']}"
         if st.session_state.res_type == "ok":
-            set_button_color("#28a745") # 正解は緑
+            set_button_color("#28a745")
             st.success(f"🎯 正解！\n\n{ans_text}")
         else:
-            set_button_color("#dc3545") # 不正解・不明は赤
+            set_button_color("#dc3545")
             msg = "💡 答え" if st.session_state.res_type == "unknown" else "❌ 残念..."
             st.error(f"{msg}\n\n正解は: {ans_text}")
         
