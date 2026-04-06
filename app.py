@@ -33,35 +33,51 @@ def get_sheet():
         return gspread.authorize(creds).open_by_key(st.secrets["spreadsheet_id"]).sheet1
     except: return None
 
-@st.cache_data(ttl=5) # 反映を速くするためにTTLを短縮
+@st.cache_data(ttl=5)
 def load_gs_data():
     sheet = get_sheet()
     if not sheet: return []
     try:
-        return sheet.get_all_records()
-    except: return []
+        # get_all_recordsが失敗する場合に備え、値として取得
+        data = sheet.get_all_values()
+        if len(data) < 2: return [] # ヘッダーのみ、または空
+        
+        headers = data[0]
+        rows = []
+        for r in data[1:]:
+            # 辞書形式に変換（列番号で固定して取得する安全策）
+            row_dict = {
+                'en': r[0] if len(r) > 0 else "",
+                'ja': r[1] if len(r) > 1 else "",
+                'count': r[2] if len(r) > 2 else 0,
+                'no': r[3] if len(r) > 3 else 0,
+                'total_shown': r[4] if len(r) > 4 else 0,
+                'is_done': r[5] if len(r) > 5 else 0
+            }
+            rows.append(row_dict)
+        return rows
+    except Exception as e:
+        st.error(f"データ読み込みエラー: {e}")
+        return []
 
 def sync_result(word_dict, res_type):
     sheet = get_sheet()
     if not sheet: return
     try:
         en_target = str(word_dict['en']).strip()
-        # 最新の全単語リストを取得して検索
         all_col1 = [str(x).strip() for x in sheet.col_values(1)]
         
         if en_target in all_col1:
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
             
-            # --- 1. 出題回数(5列目)の更新 ---
-            # 既存の値があれば取得、なければ0
+            # 出題回数(5列目)
             old_shown = 0
             if len(row_data) >= 5:
                 try: old_shown = int(float(row_data[4]))
                 except: old_shown = 0
             sheet.update_cell(row_idx, 5, old_shown + 1)
 
-            # --- 2. 正解/不正解(3列目/6列目)の更新 ---
             if res_type == 'ok':
                 old_count = 0
                 if len(row_data) >= 3:
@@ -71,27 +87,21 @@ def sync_result(word_dict, res_type):
                 new_count = old_count + 1
                 if new_count >= 5:
                     sheet.update_cell(row_idx, 3, 5)
-                    sheet.update_cell(row_idx, 6, 1) # 完了フラグ
+                    sheet.update_cell(row_idx, 6, 1) # 完了
                 else:
                     sheet.update_cell(row_idx, 3, new_count)
+                    sheet.update_cell(row_idx, 6, 0) # 未完了
             else:
-                # 間違えたら復習リストに復活
                 sheet.update_cell(row_idx, 3, 0)
-                sheet.update_cell(row_idx, 6, 0)
+                sheet.update_cell(row_idx, 6, 0) # 未完了に戻す
         else:
-            # 新規登録（まだシートにない単語）
+            # 新規追加
             try: word_no = int(float(word_dict.get('no', 0)))
             except: word_no = 0
-            
-            # [en, ja, count, no, total_shown, is_done]
-            if res_type == 'ok':
-                # 初回正解なら完了扱い
-                sheet.append_row([en_target, word_dict['ja'], 5, word_no, 1, 1])
-            else:
-                # 初回不正解なら未完了
-                sheet.append_row([en_target, word_dict['ja'], 0, word_no, 1, 0])
-    except Exception as e:
-        st.error(f"同期エラー: {e}")
+            is_ok = 1 if res_type == 'ok' else 0
+            # [en, ja, count, no, shown, is_done]
+            sheet.append_row([en_target, word_dict['ja'], 5 if is_ok else 0, word_no, 1, 1 if is_ok else 0])
+    except: pass
     st.cache_data.clear()
 
 @st.cache_data
@@ -112,14 +122,16 @@ if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
 
 gs_rows = load_gs_data()
-pending_words = [d for d in gs_rows if str(d.get('is_done', 0)) != '1']
-# 検索用に辞書化（単語をキーにする）
+# 「完了(is_done=1)」ではないもの、かつ単語が入っているものだけを復習リストとする
+pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
 
 # --- 5. サイドバー ---
 st.sidebar.title("🎓 学習メニュー")
 mode = st.sidebar.selectbox("モード", ["英→日クイズ", "日→英クイズ", "単語帳"])
 st.sidebar.divider()
+
+# ここで表示を確認
 st.sidebar.metric("現在の復習が必要な単語数", f"{len(pending_words)} 語")
 
 if mode != "単語帳":
@@ -129,25 +141,12 @@ if mode != "単語帳":
     with col2: e_no = st.number_input("終了No.", min(nos), max(nos), max(nos))
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
 
-    # 範囲変更検知
     current_settings = f"{s_no}-{e_no}-{quiz_target}-{mode}"
     if 'last_settings' in st.session_state and st.session_state.last_settings != current_settings:
         st.session_state.reset_q = True
     st.session_state.last_settings = current_settings
 
     active_list = pending_words if quiz_target == "復習のみ" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
-
-    if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
-        sheet = get_sheet()
-        if sheet:
-            rows = len(sheet.get_all_values())
-            if rows > 1:
-                cell_list = sheet.range(2, 5, rows, 5)
-                for cell in cell_list: cell.value = 0
-                sheet.update_cells(cell_list)
-            st.cache_data.clear()
-            st.session_state.reset_q = True
-            st.rerun()
 
 # --- 6. メインコンテンツ ---
 if mode == "単語帳":
@@ -161,7 +160,6 @@ else:
         
         weights = []
         for w in active_list:
-            # 空白を除去して検索
             match = gs_dict.get(str(w['en']).strip(), {})
             shown_count = match.get('total_shown', 0)
             try: s_num = float(shown_count)
@@ -181,7 +179,6 @@ else:
         
     matching_gs = gs_dict.get(str(q['t']['en']).strip(), {})
     status_display = ""
-    
     if matching_gs:
         is_done = str(matching_gs.get('is_done', 0)) == '1'
         if is_done: status_display = " | ✅ 完了済み"
@@ -190,7 +187,6 @@ else:
             try: curr_ok = int(float(raw_ok))
             except: curr_ok = 0
             status_display = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
-        
         try: total_s = int(float(matching_gs.get('total_shown', 0)))
         except: total_s = 0
         status_display += f" | 📊 学習: {total_s}回目"
@@ -231,8 +227,3 @@ else:
         if st.button("次の問題へ ➡️", use_container_width=True):
             st.session_state.reset_q = True
             st.rerun()
-
-        st.divider()
-        for c in q["c"]:
-            mark = "✅" if str(c['en']).strip() == str(q['t']['en']).strip() else "・"
-            st.write(f"{mark} **{c['en']}**: {c['ja']}")
