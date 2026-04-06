@@ -6,10 +6,19 @@ from google.oauth2.service_account import Credentials
 import json
 import os
 
-# --- ページ設定 ---
+# --- ページ設定 (スマホ最適化) ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- Googleスプレッドシート連携 ---
+# --- CSSで余白を極限まで削る ---
+st.markdown("""
+    <style>
+    .main .block-container { padding-top: 1rem; padding-bottom: 1rem; }
+    h1 { font-size: 1.8rem !important; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.0rem !important; margin-bottom: 0.2rem; }
+    div.stButton > button { margin-bottom: -10px; }
+    </style>
+    """, unsafe_allow_html=True)
+
 @st.cache_resource
 def get_spreadsheet():
     try:
@@ -24,8 +33,7 @@ def get_spreadsheet():
         if not sheet.get_all_values():
             sheet.append_row(["en", "ja", "count", "no"])
         return sheet
-    except Exception as e:
-        st.error(f"GS接続エラー: {e}")
+    except:
         return None
 
 def load_wrong_words():
@@ -74,7 +82,6 @@ def load_csv_data():
         except: continue
     return []
 
-# --- 初期化 ---
 if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv_data()
 st.session_state.wrong_words = load_wrong_words()
@@ -85,7 +92,6 @@ main_mode = st.sidebar.radio("モード:", ["クイズ", "単語帳"], horizonta
 
 if st.session_state.all_words:
     nos = [int(w['no']) for w in st.session_state.all_words]
-    st.sidebar.markdown("---")
     start_no = st.sidebar.number_input("開始No", min(nos), max(nos), min(nos))
     end_no = st.sidebar.number_input("終了No", min(nos), max(nos), max(nos))
     filtered = [w for w in st.session_state.all_words if start_no <= int(w['no']) <= end_no]
@@ -97,7 +103,7 @@ else:
 
 if main_mode == "クイズ":
     direction = st.sidebar.radio("方向:", ["英 → 日", "日 → 英"], horizontal=True)
-    st.sidebar.metric("復習が必要な単語", f"{len(st.session_state.wrong_words)} 語")
+    st.sidebar.metric("復習が必要", f"{len(st.session_state.wrong_words)}語")
     q_target = st.sidebar.radio("対象:", ["全問", "復習"], horizontal=True)
     if 'last_config' not in st.session_state or st.session_state.last_config != (direction, q_target):
         st.session_state.last_config = (direction, q_target)
@@ -105,7 +111,7 @@ if main_mode == "クイズ":
 
 # --- メイン ---
 if main_mode == "単語帳":
-    st.title("📑 一覧表示")
+    st.title("📑 単語帳")
     for w in filtered:
         c1, c2, c3 = st.columns([1, 4, 4])
         c1.write(f"{int(w['no'])}")
@@ -127,11 +133,11 @@ elif main_mode == "クイズ":
             st.session_state.current_q = {"target": target, "choices": choices, "answered": False}
 
     if st.session_state.current_q is None:
-        st.warning("対象の単語がありません。")
+        st.warning("対象なし")
     else:
         q = st.session_state.current_q
         t = q['target']
-        st.markdown(f"### No.{t.get('no', '?')} {'(復習中)' if q_target=='復習' else ''}")
+        st.markdown(f"### No.{t.get('no', '?')} {'(復習)' if q_target=='復習' else ''}")
         st.markdown(f"# **{t['en'] if direction=='英 → 日' else t['ja']}**")
 
         if not q["answered"]:
@@ -155,23 +161,20 @@ elif main_mode == "クイズ":
                 add_wrong_word_to_gs(t)
                 st.rerun()
         else:
-            # 回答後の表示エリア
-            if st.session_state.res == "ok":
-                st.success(f"🎯 正解！")
-            else:
-                st.error(f"❌ 不正解...")
+            # 判定表示 (色のついた枠を廃止)
+            res_msg = "🎯 正解！" if st.session_state.res == "ok" else "❌ 不正解..."
+            st.markdown(f"### {res_msg}")
+            # 正解の単語を中央に大きく表示 (青枠なし)
+            st.markdown(f"## {t['en']} = {t['ja']}")
 
-            # 正解の強調表示
-            st.info(f"**{t['en']}** = **{t['ja']}**")
-
-            # --- ここが修正ポイント：全選択肢の訳を表示 ---
+            # まとめを2列にしてコンパクトに表示
             st.markdown("---")
-            st.write("📖 **今回の選択肢のまとめ:**")
-            for c in q["choices"]:
-                # 正解にはチェックマークをつける
-                mark = "✅" if c['en'] == t['en'] else "・"
-                st.write(f"{mark} **{c['en']}** : {c['ja']}")
-            st.markdown("---")
+            m_cols = st.columns(2)
+            for i, c in enumerate(q["choices"]):
+                with m_cols[i % 2]:
+                    mark = "✅" if c['en'] == t['en'] else "・"
+                    st.write(f"{mark}**{c['en']}**")
+                    st.caption(f"{c['ja']}")
 
             if st.button("次へ ➡️", use_container_width=True):
                 del st.session_state.current_q
