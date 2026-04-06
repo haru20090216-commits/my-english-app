@@ -30,7 +30,6 @@ def add_wrong_word_to_gs(word_dict):
         try:
             existing = sheet.col_values(1)
             if word_dict['en'] not in existing:
-                # [英, 日, 正解回数, No] を保存
                 no_val = word_dict.get('no', 0)
                 sheet.append_row([word_dict['en'], word_dict['ja'], 0, int(no_val)])
         except: pass
@@ -46,10 +45,8 @@ def update_correct_count_in_gs(en_word):
             new_count = current_count + 1
             if new_count >= 5:
                 sheet.delete_rows(cell.row)
-                return True
             else:
                 sheet.update_cell(cell.row, 3, new_count)
-                return False
     except: pass
     return False
 
@@ -61,9 +58,11 @@ def load_base_data():
         try:
             df = pd.read_csv(path, encoding=enc)
             df.columns = df.columns.str.strip()
-            if 'no' in df.columns:
-                df['no'] = pd.to_numeric(df['no'], errors='coerce')
-            return df.dropna(subset=['en', 'ja', 'no']).to_dict('records')
+            # 番号列がない場合や壊れている場合への対策
+            if 'no' not in df.columns:
+                df['no'] = range(1, len(df) + 1)
+            df['no'] = pd.to_numeric(df['no'], errors='coerce').fillna(0)
+            return df.dropna(subset=['en', 'ja']).to_dict('records')
         except: continue
     return []
 
@@ -71,42 +70,45 @@ def load_wrong_words():
     sheet = get_spreadsheet()
     if sheet:
         try:
-            return sheet.get_all_records()
+            data = sheet.get_all_records()
+            return [d for d in data if d.get('en')]
         except: return []
     return []
 
+# --- データの読み込み ---
 if 'all_words' not in st.session_state:
     st.session_state.all_words = load_base_data()
-if 'wrong_words' not in st.session_state:
-    st.session_state.wrong_words = load_wrong_words()
+st.session_state.wrong_words = load_wrong_words()
 
 # --- サイドバー ---
 st.sidebar.title("🔍 メニュー")
 mode = st.sidebar.radio("モード切替:", ["クイズ", "辞書"], horizontal=True)
 
+filtered_words = []
 if mode == "クイズ":
     st.sidebar.markdown("---")
     st.sidebar.title("🛠 出題設定")
+    
     if st.session_state.all_words:
+        # 番号の最小値と最大値を安全に取得
         nos = [int(w['no']) for w in st.session_state.all_words]
-        start_no = st.sidebar.number_input("開始番号", min(nos), max(nos), min(nos))
-        end_no = st.sidebar.number_input("終了番号", min(nos), max(nos), max(nos))
+        min_n, max_n = min(nos), max(nos)
+        start_no = st.sidebar.number_input("開始番号", min_n, max_n, min_n)
+        end_no = st.sidebar.number_input("終了番号", min_n, max_n, max_n)
         filtered_words = [w for w in st.session_state.all_words if start_no <= int(w['no']) <= end_no]
         
         if 'last_range' not in st.session_state or st.session_state.last_range != (start_no, end_no):
             st.session_state.last_range = (start_no, end_no)
             if 'current_question' in st.session_state: del st.session_state.current_question
-    else:
-        filtered_words = []
-
+    
     st.sidebar.metric("現在の復習単語数", f"{len(st.session_state.wrong_words)} 語")
     quiz_mode = st.sidebar.radio("出題対象:", ["全問", "復習"], horizontal=True)
+    
     if 'last_quiz_mode' not in st.session_state or st.session_state.last_quiz_mode != quiz_mode:
         st.session_state.last_quiz_mode = quiz_mode
         if 'current_question' in st.session_state: del st.session_state.current_question
 
 # --- メインコンテンツ ---
-
 if mode == "辞書":
     st.title("📖 単語検索辞書")
     search_q = st.text_input("検索 (英単語を入力)", "").strip().lower()
@@ -116,23 +118,80 @@ if mode == "辞書":
             with st.expander(f"📌 {res['en']}"):
                 st.write(f"意味: {res['ja']} (No.{int(res['no'])})")
     else:
-        st.write("英単語を入力してください。")
+        st.info("英単語を入力してください。CSVデータから検索します。")
 
 elif mode == "クイズ":
-    active_list = st.session_state.wrong_words if (quiz_mode == "復習" and st.session_state.wrong_words) else filtered_words
-    
+    # 出題リストの決定
+    if quiz_mode == "復習":
+        active_list = st.session_state.wrong_words
+    else:
+        active_list = filtered_words
+
+    # 問題の生成
     if 'current_question' not in st.session_state:
         if not active_list:
             st.session_state.current_question = None
         else:
             target = random.choice(active_list)
-            others = [w for w in st.session_state.all_words if w['en'] != target['en']]
+            # 選択肢は全データからランダムに取得（全データがなければ復習用データから）
+            pool = st.session_state.all_words if st.session_state.all_words else active_list
+            others = [w for w in pool if w['en'] != target['en']]
             choices = random.sample(others, min(len(others), 3)) + [target]
             random.shuffle(choices)
             st.session_state.current_question = {"target": target, "choices": choices, "answered": False}
 
+    # 表示処理
     if st.session_state.current_question is None:
-        st.warning("単語が見つかりません。設定を確認してください。")
+        st.warning("⚠️ 出題できる単語がありません。")
+        st.write("- 「全問」モードの場合：サイドバーの開始・終了番号を見直してください。")
+        st.write("- 「復習」モードの場合：まだ復習リストに単語が登録されていません。")
     else:
         q = st.session_state.current_question
         t = q['target']
+        
+        q_no = t.get('no', '?')
+        q_count = t.get('count', 0)
+        try: display_count = int(q_count)
+        except: display_count = 0
+        
+        c_info = f" (あと {5 - display_count} 回)" if quiz_mode == "復習" else ""
+        st.markdown(f"### No.{int(float(q_no))}{c_info}")
+        st.markdown(f"# **{t['en']}**")
+
+        if not q["answered"]:
+            cols = st.columns(2)
+            for i, choice in enumerate(q["choices"]):
+                with cols[i % 2]:
+                    if st.button(choice["ja"], key=f"btn_{i}", use_container_width=True):
+                        q["answered"] = True
+                        if choice["ja"] == t["ja"]:
+                            st.session_state.res_type = "ok"
+                            update_correct_count_in_gs(t['en'])
+                        else:
+                            st.session_state.res_type = "ng"
+                            add_wrong_word_to_gs(t)
+                        st.session_state.wrong_words = load_wrong_words()
+                        st.rerun()
+            
+            if st.button("❓ わからない", key="dont_know", use_container_width=True):
+                q["answered"] = True
+                st.session_state.res_type = "unknown"
+                add_wrong_word_to_gs(t)
+                st.session_state.wrong_words = load_wrong_words()
+                st.rerun()
+        else:
+            if st.session_state.res_type == "ok":
+                st.success(f"🎯 正解: {t['ja']}")
+            elif st.session_state.res_type == "unknown":
+                st.warning(f"💡 意味: {t['ja']}")
+            else:
+                st.error(f"❌ 不正解... 正解は: {t['ja']}")
+            
+            st.write("---")
+            for c in q["choices"]:
+                m = "✅" if c['en'] == t['en'] else "・"
+                st.write(f"{m} **{c['en']}** : {c['ja']}")
+            
+            if st.button("次の問題へ ➡️", use_container_width=True):
+                del st.session_state.current_question
+                st.rerun()
