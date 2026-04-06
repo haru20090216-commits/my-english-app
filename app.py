@@ -1,6 +1,5 @@
 import streamlit as st
 import random
-import time
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
@@ -10,7 +9,7 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. スタイル設定 ---
+# --- 2. スタイル設定 (判定色ボタン) ---
 def set_button_color(color_code):
     st.markdown(f"""
         <style>
@@ -34,11 +33,10 @@ def get_sheet():
         return gspread.authorize(creds).open_by_key(st.secrets["spreadsheet_id"]).sheet1
     except: return None
 
-@st.cache_data(ttl=60) # 復習状況を反映するためキャッシュは1分に短縮
+@st.cache_data(ttl=60)
 def load_gs_data():
     sheet = get_sheet()
     if not sheet: return []
-    # [英, 日, 正解数, No] の形式を想定
     return sheet.get_all_records()
 
 def sync_result(word_dict, res_type):
@@ -46,29 +44,26 @@ def sync_result(word_dict, res_type):
     if not sheet: return
     try:
         en = word_dict['en']
-        # スプレッドシートから該当単語を探す
         cells = sheet.col_values(1)
         
         if res_type == 'ok':
             if en in cells:
                 row_idx = cells.index(en) + 1
-                # 現在の正解数を取得
                 val = sheet.cell(row_idx, 3).value
                 curr = int(val) if val and str(val).isdigit() else 0
                 new_count = curr + 1
                 
                 if new_count >= 5:
-                    sheet.delete_rows(row_idx) # 5回達成で削除
+                    sheet.delete_rows(row_idx) # 5回達成でリストから削除
                 else:
-                    sheet.update_cell(row_idx, 3, new_count) # カウントアップ
+                    sheet.update_cell(row_idx, 3, new_count)
         else:
-            # 不正解または「わからない」または「時間切れ」
+            # 不正解または「わからない」
             if en not in cells:
-                # リストになければ新規追加（正解数0からスタート）
+                # 新しく復習リストに追加
                 sheet.append_row([en, word_dict['ja'], 0, int(float(word_dict.get('no', 0)))])
             else:
-                # すでにリストにある場合は、正解数を「0」にリセット（厳しいルールにする場合）
-                # リセットしたくない場合はこの行をコメントアウトしてください
+                # すでにリストにある場合は正解数を0にリセット
                 row_idx = cells.index(en) + 1
                 sheet.update_cell(row_idx, 3, 0)
                 
@@ -92,15 +87,12 @@ def load_csv():
 if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
 
-# スプレッドシートから復習データを取得
 gs_rows = load_gs_data()
-# 正解数を保持した状態でセッションに格納
 st.session_state.wrong_words = [d for d in gs_rows if d.get('en')]
 
 # --- 5. サイドバー ---
 st.sidebar.title("🎓 学習メニュー")
 mode = st.sidebar.selectbox("モード", ["英→日クイズ", "日→英クイズ", "単語帳"])
-limit_sec = st.sidebar.slider("制限時間 (秒)", 3, 20, 10)
 
 st.sidebar.divider()
 st.sidebar.metric("現在の復習が必要な単語数", f"{len(st.session_state.wrong_words)} 語")
@@ -127,21 +119,20 @@ else:
         others = random.sample([w for w in pool if w['en'] != target['en']], 3)
         choices = others + [target]
         random.shuffle(choices)
-        st.session_state.q = {"t": target, "c": choices, "ans": False, "start_time": time.time()}
+        st.session_state.q = {"t": target, "c": choices, "ans": False}
         st.session_state.reset_q = False
 
     q = st.session_state.q
     
-    # --- 残り回数の表示ロジック ---
-    # スプレッドシートにある単語なら残り回数を計算
+    # 残り回数の表示
     matching_wrong = next((w for w in st.session_state.wrong_words if w['en'] == q['t']['en']), None)
     count_display = ""
     if matching_wrong:
-        # 'count' またはスプレッドシートの3列目の項目名に合わせて取得
-        current_ok = matching_wrong.get('count', matching_wrong.get('正解数', 0))
+        # シートの列名に合わせて 'count' か '正解数' を取得
+        curr_ok = matching_wrong.get('count', matching_wrong.get('正解数', 0))
         try:
-            left = 5 - int(current_ok)
-            count_display = f" 🔥 あと {max(0, left)} 回正解でクリア！"
+            left = 5 - int(curr_ok)
+            count_display = f" 🔥 あと {max(0, left)} 回！"
         except: pass
 
     st.write(f"No.{int(float(q['t']['no']))}{count_display}")
@@ -155,15 +146,10 @@ else:
             choice_text = c['ja'] if mode == "英→日クイズ" else c['en']
             with cols[i % 2]:
                 if st.button(choice_text, key=f"b{i}", use_container_width=True):
-                    elapsed = time.time() - q["start_time"]
                     q["ans"] = True
-                    if elapsed > limit_sec:
-                        st.session_state.res_type = "timeout"
-                        sync_result(q['t'], "ng")
-                    else:
-                        is_correct = (c['en'] == q['t']['en'])
-                        st.session_state.res_type = "ok" if is_correct else "ng"
-                        sync_result(q['t'], st.session_state.res_type)
+                    is_correct = (c['en'] == q['t']['en'])
+                    st.session_state.res_type = "ok" if is_correct else "ng"
+                    sync_result(q['t'], st.session_state.res_type)
                     st.rerun()
         
         if st.button("❓ わからない", use_container_width=True):
@@ -175,13 +161,10 @@ else:
         # 回答後の表示
         ans_text = f"{q['t']['en']} : {q['t']['ja']}"
         if st.session_state.res_type == "ok":
-            set_button_color("#28a745")
+            set_button_color("#28a745") # 正解は緑
             st.success(f"🎯 正解！\n\n{ans_text}")
-        elif st.session_state.res_type == "timeout":
-            set_button_color("#ffc107")
-            st.warning(f"⏰ 時間切れ！ ({limit_sec}秒以内)\n\n正解は: {ans_text}")
         else:
-            set_button_color("#dc3545")
+            set_button_color("#dc3545") # 不正解・不明は赤
             msg = "💡 答え" if st.session_state.res_type == "unknown" else "❌ 残念..."
             st.error(f"{msg}\n\n正解は: {ans_text}")
         
