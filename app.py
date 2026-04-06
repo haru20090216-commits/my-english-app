@@ -9,17 +9,21 @@ import os
 # --- ページ設定 ---
 st.set_page_config(page_title="英単語", layout="centered")
 
-# --- CSSカスタマイズ (さらに凝縮) ---
+# --- CSSカスタマイズ (文字サイズ調整) ---
 st.markdown("""
     <style>
     .main .block-container { padding: 0.3rem 1rem !important; }
-    /* 問題文のフォントサイズを2サイズアップ */
+    /* 問題文 */
     .mondai-text { font-size: 2.2rem !important; font-weight: bold; margin: 0.2rem 0 !important; line-height: 1.2; }
-    h3 { font-size: 0.8rem !important; margin: 0 !important; opacity: 0.7; }
-    .stButton > button { height: 2.4rem !important; margin-bottom: -12px !important; font-size: 0.9rem !important; }
+    /* 補足情報の文字サイズ */
+    h3 { font-size: 0.9rem !important; margin: 0 !important; opacity: 0.8; }
+    /* ボタン */
+    .stButton > button { height: 2.5rem !important; margin-bottom: -12px !important; font-size: 1.0rem !important; }
     hr { margin: 0.4rem 0 !important; }
-    /* 選択肢まとめのテキストサイズ */
-    .matome-text { font-size: 0.75rem !important; line-height: 1.1; }
+    /* 【修正】他の回答（まとめ）の文字サイズをアップ */
+    .matome-item { font-size: 0.95rem !important; line-height: 1.2; margin-bottom: 5px; }
+    .matome-en { font-weight: bold; color: #1E88E5; }
+    .matome-ja { font-size: 0.85rem !important; color: #555; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -122,7 +126,6 @@ elif main_mode == "クイズ":
         q = st.session_state.current_q
         t = q['target']
         st.write(f"No.{t.get('no', '?')}")
-        # 問題文を大きく表示
         q_label = t['en'] if direction=='英→日' else t['ja']
         st.markdown(f'<div class="mondai-text">{q_label}</div>', unsafe_allow_html=True)
 
@@ -146,16 +149,21 @@ elif main_mode == "クイズ":
                 add_wrong_word_to_gs(t)
                 st.rerun()
         else:
-            # 回答直後に「次へ」ボタンを配置（押しやすさ重視）
+            # 回答表示
             st.write(f"### {st.session_state.res} {t['en']} = {t['ja']}")
             if st.button("次へ ➡️", use_container_width=True, type="primary"):
                 del st.session_state.current_q
                 st.rerun()
             
-            # その下に他の回答（選択肢）を配置
+            # 【修正】他の回答まとめを少し大きく、2列にして縦幅を抑える
             st.markdown("---")
-            m_cols = st.columns(4)
+            m_cols = st.columns(2)
             for i, c in enumerate(q["choices"]):
-                with m_cols[i]:
-                    mark = "✅" if c['en'] == t['en'] else ""
-                    st.markdown(f'<div class="matome-text">{mark}<b>{c["en"]}</b><br>{c["ja"]}</div>', unsafe_allow_html=True)
+                with m_cols[i % 2]:
+                    mark = "✅ " if c['en'] == t['en'] else ""
+                    st.markdown(f'''
+                        <div class="matome-item">
+                            {mark}<span class="matome-en">{c["en"]}</span><br>
+                            <span class="matome-ja">{c["ja"]}</span>
+                        </div>
+                    ''', unsafe_allow_html=True)
