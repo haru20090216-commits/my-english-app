@@ -64,12 +64,20 @@ def sync_result(word_dict, res_type):
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
             
-            # 出題回数更新
-            old_shown = int(float(row_data[4])) if len(row_data) >= 5 and str(row_data[4]).replace('.','').isdigit() else 0
+            # 出題回数(5列目)の安全な取得
+            try:
+                raw_shown = row_data[4] if len(row_data) >= 5 else 0
+                old_shown = int(float(str(raw_shown).strip())) if str(raw_shown).strip() else 0
+            except: old_shown = 0
+            
             sheet.update_cell(row_idx, 5, old_shown + 1)
 
             if res_type == 'ok':
-                old_count = int(float(row_data[2])) if len(row_data) >= 3 and str(row_data[2]).replace('.','').isdigit() else 0
+                try:
+                    raw_count = row_data[2] if len(row_data) >= 3 else 0
+                    old_count = int(float(str(raw_count).strip())) if str(raw_count).strip() else 0
+                except: old_count = 0
+                
                 new_count = old_count + 1
                 if new_count >= 5:
                     sheet.update_cell(row_idx, 3, 5)
@@ -121,7 +129,6 @@ if mode != "単語帳":
     with col2: e_no = st.number_input("終了No.", min(nos), max(nos), max(nos))
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
 
-    # 範囲変更検知でリセット
     current_settings = f"{s_no}-{e_no}-{quiz_target}-{mode}"
     if 'last_settings' in st.session_state and st.session_state.last_settings != current_settings:
         st.session_state.reset_q = True
@@ -129,14 +136,12 @@ if mode != "単語帳":
 
     active_list = pending_words if quiz_target == "復習のみ" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
 
-    # --- 出題頻度のみリセットボタン ---
     st.sidebar.markdown("---")
     if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
         sheet = get_sheet()
         if sheet:
             rows = len(sheet.get_all_values())
             if rows > 1:
-                # 5列目(total_shown)を一括で0にする
                 cell_list = sheet.range(2, 5, rows, 5)
                 for cell in cell_list: cell.value = 0
                 sheet.update_cells(cell_list)
@@ -155,11 +160,16 @@ else:
             st.warning("対象となる単語がありません。")
             st.stop()
         
-        # 重み付け（回数が少ないほど優先）
+        # 重み付けの安全な計算
         weights = []
         for w in active_list:
             match = gs_dict.get(str(w['en']).strip(), {})
-            s_num = float(match.get('total_shown', 0))
+            raw_val = match.get('total_shown', 0)
+            try:
+                # 文字列が含まれていても安全に数値化
+                s_num = float(str(raw_val).strip()) if str(raw_val).strip() else 0.0
+            except:
+                s_num = 0.0
             weights.append(1.0 / (s_num + 1.0))
         
         target = random.choices(active_list, weights=weights, k=1)[0]
@@ -172,7 +182,6 @@ else:
     q = st.session_state.q
     matching_gs = gs_dict.get(str(q['t']['en']).strip(), {})
     
-    # 状態表示
     try: display_no = int(float(q['t'].get('no', 0)))
     except: display_no = 0
     
@@ -181,14 +190,21 @@ else:
         is_done = str(matching_gs.get('is_done', 0)) == '1'
         if is_done: status = " | ✅ 完了済み"
         else:
-            curr_ok = int(float(matching_gs.get('count', 0)))
+            try:
+                curr_ok = int(float(str(matching_gs.get('count', 0)).strip()))
+            except: curr_ok = 0
             status = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
-        status += f" | 📊 学習: {int(float(matching_gs.get('total_shown', 0)))}回目"
+        
+        try:
+            total_s = int(float(str(matching_gs.get('total_shown', 0)).strip()))
+        except: total_s = 0
+        status += f" | 📊 学習: {total_s}回目"
     else:
         status = " | 📊 学習: 初回"
 
     st.write(f"No.{display_no}{status}")
     
+    # ... (クイズ表示処理などは変更なし) ...
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
 
