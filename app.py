@@ -9,7 +9,7 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. スタイル設定 (ボタンの色をカスタマイズ) ---
+# --- 2. スタイル設定 (判定色ボタン) ---
 def set_button_color(color_code):
     st.markdown(f"""
         <style>
@@ -81,52 +81,61 @@ if 'all_words' not in st.session_state:
 wrong_data = load_gs_data()
 st.session_state.wrong_words = [d for d in wrong_data if d.get('en')]
 
-# --- 5. メイン処理 ---
-st.sidebar.title("🔍 メニュー")
-mode = st.sidebar.radio("モード", ["クイズ", "辞書"], horizontal=True)
+# --- 5. サイドバー (設定・情報表示) ---
+st.sidebar.title("🎓 学習メニュー")
+mode = st.sidebar.selectbox("モード選択", ["英→日クイズ", "日→英クイズ", "単語帳"])
 
-if mode == "辞書":
-    st.title("📖 辞書")
-    search = st.text_input("検索", "").strip().lower()
-    if search:
-        res = [w for w in st.session_state.all_words if w['en'].lower().startswith(search)]
-        for r in res[:20]: st.write(f"**{r['en']}**: {r['ja']} (No.{int(r['no'])})")
-else:
-    # クイズ設定
+# 復習問題数の表示
+st.sidebar.divider()
+st.sidebar.metric("現在の復習問題数", f"{len(st.session_state.wrong_words)} 語")
+
+if mode != "単語帳":
     st.sidebar.markdown("---")
     nos = [int(w['no']) for w in st.session_state.all_words] or [0]
-    s_no = st.sidebar.number_input("開始", min(nos), max(nos), min(nos))
-    e_no = st.sidebar.number_input("終了", min(nos), max(nos), max(nos))
-    quiz_target = st.sidebar.radio("対象", ["全問", "復習"], horizontal=True)
-    
+    s_no = st.sidebar.number_input("開始No.", min(nos), max(nos), min(nos))
+    e_no = st.sidebar.number_input("終了No.", min(nos), max(nos), max(nos))
+    quiz_target = st.sidebar.radio("出題対象", ["全問", "復習"], horizontal=True)
     active_list = st.session_state.wrong_words if quiz_target == "復習" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
+else:
+    active_list = st.session_state.all_words
 
+# --- 6. メインコンテンツ ---
+
+# --- 単語帳モード ---
+if mode == "単語帳":
+    st.title("📖 単語帳")
+    st.write("CSVの全単語を一覧表示します。")
+    df_display = pd.DataFrame(st.session_state.all_words)
+    st.dataframe(df_display[['no', 'en', 'ja']], hide_index=True, use_container_width=True)
+
+# --- クイズモード (英→日 / 日→英) ---
+else:
     if 'q' not in st.session_state or st.session_state.get('reset_q'):
         if not active_list:
-            st.warning("単語がありません")
+            st.warning("対象となる単語がありません。設定を確認してください。")
             st.stop()
         target = random.choice(active_list)
-        pool = st.session_state.all_words if st.session_state.all_words else active_list
-        others = random.sample([w for w in pool if w['en'] != target['en']], min(len(pool)-1, 3))
+        pool = st.session_state.all_words
+        others = random.sample([w for w in pool if w['en'] != target['en']], 3)
         choices = others + [target]
         random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
         st.session_state.reset_q = False
 
     q = st.session_state.q
-    count_info = ""
-    if quiz_target == "復習":
-        c = q['t'].get('count', 0)
-        count_info = f" (あと {5 - int(c)} 回)"
+    st.write(f"No.{int(float(q['t']['no']))}")
     
-    st.write(f"No.{int(float(q['t']['no']))}{count_info}")
-    st.markdown(f"# {q['t']['en']}")
+    # モードによって問題の表示を切り替え
+    question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
+    st.markdown(f"# {question_text}")
 
     if not q["ans"]:
         cols = st.columns(2)
         for i, c in enumerate(q["c"]):
+            # モードによって選択肢の表示を切り替え
+            choice_text = c['ja'] if mode == "英→日クイズ" else c['en']
             with cols[i % 2]:
-                if st.button(c["ja"], key=f"b{i}", use_container_width=True):
+                if st.button(choice_text, key=f"b{i}", use_container_width=True):
                     q["ans"] = True
                     is_correct = (c['en'] == q['t']['en'])
                     st.session_state.res_type = "ok" if is_correct else "ng"
@@ -139,16 +148,17 @@ else:
             sync_result(q['t'], "unknown")
             st.rerun()
     else:
-        # 回答後の表示とボタン色設定
+        # 回答後の表示
+        correct_answer = f"{q['t']['en']} : {q['t']['ja']}"
         if st.session_state.res_type == "ok":
-            set_button_color("#28a745")  # 緑色
-            st.success(f"🎯 正解: {q['t']['ja']}")
+            set_button_color("#28a745")
+            st.success(f"🎯 正解！\n\n{correct_answer}")
         else:
-            set_button_color("#dc3545")  # 赤色
+            set_button_color("#dc3545")
             if st.session_state.res_type == "unknown":
-                st.warning(f"💡 意味: {q['t']['ja']}")
+                st.warning(f"💡 答え\n\n{correct_answer}")
             else:
-                st.error(f"❌ 正解: {q['t']['ja']}")
+                st.error(f"❌ 残念...\n\n正解は: {correct_answer}")
         
         if st.button("次の問題へ ➡️", use_container_width=True):
             st.session_state.reset_q = True
