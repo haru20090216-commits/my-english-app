@@ -10,51 +10,51 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. 音声再生用関数 (強化版) ---
+# --- 2. 音声再生用JavaScript ---
 def text_to_speech(text):
     if text:
         js_code = f"""
             <script>
             (function() {{
-                if (!window.speechSynthesis) return;
                 window.speechSynthesis.cancel();
                 var msg = new SpeechSynthesisUtterance();
                 msg.text = "{text}";
                 msg.lang = "en-US";
                 msg.rate = 1.0;
-                setTimeout(function() {{
-                    window.speechSynthesis.speak(msg);
-                }}, 50);
+                window.speechSynthesis.speak(msg);
             }})();
             </script>
         """
         components.html(js_code, height=0)
 
-# --- 3. スタイル設定 (スマホ横並び用) ---
+# --- 3. スタイル設定 ---
 def set_ui_style():
     st.markdown("""
         <style>
-        /* ボタンの基本色設定 */
-        div.stButton > button:first-child {
-            border-radius: 10px;
+        /* 問題文ボタンの装飾：枠線を消し、通常のテキストに近い見た目に */
+        .stButton > button[kind="secondary"] {
+            border: none !important;
+            background-color: transparent !important;
+            padding: 0 !important;
+            color: #31333F !important; /* Streamlitの標準テキスト色 */
+            text-align: left !important;
+            display: block !important;
+            width: 100% !important;
+            transition: opacity 0.2s;
         }
-        /* 📢ボタンを小さく、文字の横に配置するための微調整 */
-        .stButton button[kind="secondary"] {
-            padding: 0px 10px !important;
-            height: 2.5rem !important;
-            min-width: 3rem !important;
+        /* タップした時に少し薄くして反応を出す */
+        .stButton > button[kind="secondary"]:active {
+            opacity: 0.6;
         }
-        /* 問題文の文字サイズ調整 */
-        .question-text {
-            font-size: 1.8rem !important;
-            font-weight: bold;
+        /* H1タグ相当のサイズ感に調整 */
+        .stButton > button[kind="secondary"] h1 {
             margin: 0;
-            display: inline-block;
+            padding: 10px 0;
         }
         </style>
     """, unsafe_allow_html=True)
 
-# --- 4. Googleスプレッドシート連携 (省略なし) ---
+# --- 4. スプレッドシート連携 (省略なし) ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -85,8 +85,7 @@ def sync_result(word_dict, res_type):
         if en_target in all_col1:
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
-            try:
-                old_s = int(float(str(row_data[4]))) if len(row_data) > 4 else 0
+            try: old_s = int(float(str(row_data[4]))) if len(row_data) > 4 else 0
             except: old_s = 0
             sheet.update_cell(row_idx, 5, old_s + 1)
             if res_type == 'ok':
@@ -118,7 +117,7 @@ if not st.session_state.started:
         st.rerun()
     st.stop()
 
-# --- 6. サイドバー機能 ---
+# --- 6. サイドバー ---
 gs_rows = load_gs_data()
 pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
@@ -165,40 +164,16 @@ else:
     
     st.write(f"No.{int(float(q['t']['no']))} | 📊 学習: {total_s}回目")
 
-    # --- 【解決策】絶対横並びにするHTML構造 ---
-    question_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
-
-    # 1. まず「📢」ボタンを右側に浮かせる(float)
-    # 2. その後にテキストを表示する
-    # これにより、文字の長さに関わらずボタンが右上に固定されます
-    col_v, col_q = st.columns([0.8, 0.2]) # ここではあえて使わず、下で重ねます
+    # --- 問題文そのものをタップ可能なエリアにする ---
+    display_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
     
-    # 手法：コンテナを1つ作り、中にボタンを右寄せで配置
-    container = st.container()
-    with container:
-        # 右寄せのボタンエリア
-        html_btn = st.empty() 
-        # 重なりを作るためのCSS調整
-        st.markdown("""
-            <style>
-            .stButton { text-align: right; }
-            .q-wrapper { 
-                margin-top: -50px; 
-                padding-right: 60px; 
-                word-wrap: break-word;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-        
-        if st.button("📢", key="spk_btn"):
-            text_to_speech(q['t']['en'])
-            
-        # ボタンのすぐ上に文字を食い込ませる
-        st.markdown(f'<div class="q-wrapper"><h1>{question_text}</h1></div>', unsafe_allow_html=True)
+    # 見た目はテキストだが、クリックすると発音が流れる
+    if st.button(f"# {display_text}", key="q_text_btn"):
+        text_to_speech(q['t']['en'])
 
-    # --- 選択肢ボタン ---
+    # 選択肢
     if not q["ans"]:
-        st.write("") # スペース確保
+        st.write("") 
         cols = st.columns(2)
         for i, c in enumerate(q["c"]):
             label = c['ja'] if mode == "英→日クイズ" else c['en']
@@ -211,6 +186,7 @@ else:
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True; st.session_state.res_type = "unknown"; sync_result(q['t'], "unknown"); st.rerun()
     else:
+        # 回答後の結果表示
         res = st.session_state.res_type
         if res == "ok":
             st.success(f"🎯 正解！ {q['t']['en']} : {q['t']['ja']}")
