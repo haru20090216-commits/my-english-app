@@ -10,21 +10,30 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. 音声再生用関数 ---
+# --- 2. 音声再生用関数 (強化版) ---
 def text_to_speech(text):
     if text:
+        # 重複再生を防ぎ、スマホの待機状態を解除するJS
         js_code = f"""
             <script>
-            window.speechSynthesis.cancel();
-            var msg = new SpeechSynthesisUtterance();
-            msg.text = "{text}";
-            msg.lang = "en-US";
-            msg.rate = 1.0;
-            window.speechSynthesis.speak(msg);
+            (function() {{
+                if (!window.speechSynthesis) return;
+                window.speechSynthesis.cancel(); // 実行中の音声を停止
+                
+                var msg = new SpeechSynthesisUtterance();
+                msg.text = "{text}";
+                msg.lang = "en-US";
+                msg.rate = 1.0;
+                msg.volume = 1.0; // 音量を最大に指定
+                
+                // 少しだけ遅延させることでブラウザのブロックを回避しやすくする
+                setTimeout(function() {{
+                    window.speechSynthesis.speak(msg);
+                }}, 50);
+            }})();
             </script>
         """
         components.html(js_code, height=0)
-
 # --- 3. スタイル設定 ---
 def set_button_color(color_code):
     st.markdown(f"""
