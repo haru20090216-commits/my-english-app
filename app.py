@@ -12,15 +12,19 @@ st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout=
 
 # --- 2. 発音用JavaScript関数 ---
 def text_to_speech(text):
-    js_code = f"""
-        <script>
-        var msg = new SpeechSynthesisUtterance();
-        msg.text = "{text}";
-        msg.lang = "en-US";
-        window.speechSynthesis.speak(msg);
-        </script>
-    """
-    components.html(js_code, height=0)
+    if text:
+        # スマホのサイレントモード解除を促すための微調整を含んだJS
+        js_code = f"""
+            <script>
+            window.speechSynthesis.cancel(); // 前の音声をキャンセル
+            var msg = new SpeechSynthesisUtterance();
+            msg.text = "{text}";
+            msg.lang = "en-US";
+            msg.rate = 1.0;
+            window.speechSynthesis.speak(msg);
+            </script>
+        """
+        components.html(js_code, height=0)
 
 # --- 3. スタイル設定 ---
 def set_button_color(color_code):
@@ -31,14 +35,13 @@ def set_button_color(color_code):
             color: white !important;
             border: None !important;
         }}
-        /* 📢ボタンを小さく配置するためのスタイル */
         .stButton button {{
             padding: 0.2rem 0.5rem;
         }}
         </style>
     """, unsafe_allow_html=True)
 
-# --- 4. Googleスプレッドシート連携 ---
+# --- 4. Googleスプレッドシート連携 (省略せず維持) ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -120,13 +123,24 @@ def load_csv():
 # --- 5. データ準備 ---
 if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
+if 'started' not in st.session_state:
+    st.session_state.started = False
 
 gs_rows = load_gs_data()
 pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
 
-# --- 6. サイドバー ---
-st.sidebar.title("🎓 学習メニュー")
+# --- 6. メインロジック ---
+if not st.session_state.started:
+    st.title("🎓 英単語マスター")
+    st.write("スマホで音声を再生するために、下のボタンを押して開始してください。")
+    if st.button("🚀 学習を始める", use_container_width=True):
+        st.session_state.started = True
+        st.rerun()
+    st.stop()
+
+# --- 7. サイドバー --- (開始後のみ表示)
+st.sidebar.title("🎓 メニュー")
 mode = st.sidebar.selectbox("モード", ["英→日クイズ", "日→英クイズ", "単語帳"])
 st.sidebar.divider()
 st.sidebar.metric("復習が必要な単語数", f"{len(pending_words)} 語")
@@ -144,17 +158,7 @@ if mode != "単語帳":
     st.session_state.last_settings = current_settings
     active_list = pending_words if quiz_target == "復習のみ" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
 
-    st.sidebar.markdown("---")
-    if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
-        sheet = get_sheet()
-        if sheet:
-            rows = len(sheet.get_all_values())
-            if rows > 1:
-                cell_list = sheet.range(2, 5, rows, 5); [setattr(c, 'value', 0) for c in cell_list]
-                sheet.update_cells(cell_list)
-            st.cache_data.clear(); st.session_state.reset_q = True; st.rerun()
-
-# --- 7. メインコンテンツ ---
+# --- 8. クイズ表示 ---
 if mode == "単語帳":
     st.title("📖 単語帳")
     st.dataframe(pd.DataFrame(st.session_state.all_words)[['no', 'en', 'ja']], hide_index=True, use_container_width=True)
@@ -172,7 +176,7 @@ else:
         choices = others + [target]; random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}; st.session_state.reset_q = False
         
-        # 出題時に自動で音声を流す
+        # 出題時に音声を再生
         text_to_speech(target['en'])
 
     q = st.session_state.q
@@ -180,29 +184,13 @@ else:
     try: display_no = int(float(q['t'].get('no', 0)))
     except: display_no = 0
     
-    # 状態表示
-    status = ""
-    if matching_gs:
-        is_done = str(matching_gs.get('is_done', 0)) == '1'
-        if is_done: status = " | ✅ 完了済み"
-        else:
-            try: curr_ok = int(float(str(matching_gs.get('count', 0)).strip()))
-            except: curr_ok = 0
-            status = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
-        try: total_s = int(float(str(matching_gs.get('total_shown', 0)).strip()))
-        except: total_s = 0
-        status += f" | 📊 学習: {total_s}回目"
-    else: status = " | 📊 学習: 初回"
-
-    st.write(f"No.{display_no}{status}")
+    st.write(f"No.{display_no}")
     
-    # --- 問題文と📢ボタンを横並びに配置 ---
     col_q, col_v = st.columns([0.85, 0.15])
     with col_q:
         question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
         st.markdown(f"## {question_text}")
     with col_v:
-        # このボタンは答え合わせ後もずっと表示されます
         if st.button("📢", key="speech_btn"):
             text_to_speech(q['t']['en'])
 
