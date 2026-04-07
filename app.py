@@ -19,13 +19,24 @@ def set_button_color(color_code):
             color: white !important;
             border: None !important;
         }}
-        /* 問題文（H1）をクリック可能に見せるためのスタイル */
-        h1 {{
+        /* 問題文（H1）を巨大化し、クリック可能（再生ボタン化）にするスタイル */
+        .speech-main {{
+            text-align: center;
             cursor: pointer;
             transition: opacity 0.2s;
+            padding: 20px 0;
+            user-select: none;
         }}
-        h1:active {{
-            opacity: 0.6;
+        .speech-main h1 {{
+            font-size: 3.5rem !important;
+            margin: 0;
+            display: inline-block;
+        }}
+        .speech-main:hover {{
+            opacity: 0.7;
+        }}
+        .speech-main:active {{
+            opacity: 0.4;
         }}
         </style>
     """, unsafe_allow_html=True)
@@ -193,7 +204,7 @@ else:
         random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
         st.session_state.reset_q = False
-        # 【追加】新しい問題が出た時に自動再生
+        # 新しい問題が出た時に自動再生
         text_to_speech(target['en'])
 
     q = st.session_state.q
@@ -220,11 +231,25 @@ else:
     
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     
-    # 【追加】問題文をクリックすると音声が流れるように
-    if st.markdown(f'<div id="speak-btn"><h1>{question_text}</h1></div>', unsafe_allow_html=True):
-         # 見た目を崩さずクリック判定を得るために不可視ボタンを配置
-         if st.button("🔊 再生", key="hidden_speaker", help="クリックして再生"):
-             text_to_speech(q['t']['en'])
+    # 問題文そのものを透明なボタンで覆い、一体化させる
+    st.markdown(f'<div class="speech-main">', unsafe_allow_html=True)
+    if st.button(question_text, key="integrated_speech_btn", help="クリックして再生", use_container_width=True):
+        text_to_speech(q['t']['en'])
+    st.markdown('</div>', unsafe_allow_html=True)
+    # ボタン自体をH1風に見せるためのスタイル上書き
+    st.markdown("""
+        <style>
+        div[data-testid="stButton"] > button[key="integrated_speech_btn"] {
+            font-size: 3.5rem !important;
+            font-weight: bold !important;
+            background-color: transparent !important;
+            color: inherit !important;
+            border: none !important;
+            padding: 0 !important;
+            height: auto !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
     if not q["ans"]:
         cols = st.columns(2)
