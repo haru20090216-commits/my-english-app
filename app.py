@@ -13,16 +13,15 @@ st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout=
 def set_ui_style():
     st.markdown("""
         <style>
-        /* ボタンの角を丸くする */
         div.stButton > button:first-child {
             border-radius: 10px;
         }
-        /* ステータス情報のテキストスタイル */
         .status-text {
-            font-size: 0.9rem;
-            color: #666;
+            font-size: 1.0rem;
+            color: #555;
             text-align: center;
             margin-bottom: 5px;
+            font-weight: 500;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -58,9 +57,11 @@ def sync_result(word_dict, res_type):
         if en_target in all_col1:
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
+            # 学習回数（5列目）を更新
             try: old_s = int(float(str(row_data[4]))) if len(row_data) > 4 else 0
             except: old_s = 0
             sheet.update_cell(row_idx, 5, old_s + 1)
+            # 正解数（3列目）を更新
             if res_type == 'ok':
                 try: old_c = int(float(str(row_data[2]))) if len(row_data) > 2 else 0
                 except: old_c = 0
@@ -74,16 +75,14 @@ def sync_result(word_dict, res_type):
 
 # --- 4. データロード ---
 set_ui_style()
-
 if 'all_words' not in st.session_state:
     if os.path.exists("words.csv"):
         df = pd.read_csv("words.csv")
         df['no'] = pd.to_numeric(df['no'], errors='coerce').fillna(0)
         st.session_state.all_words = df.to_dict('records')
-    else:
-        st.session_state.all_words = []
+    else: st.session_state.all_words = []
 
-# --- 5. サイドバー ---
+# --- 5. サイドバーと設定監視 ---
 gs_rows = load_gs_data()
 pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
@@ -100,6 +99,12 @@ if mode != "単語帳":
     with col2: e_no = st.number_input("終了No.", min(nos), max(nos), max(nos))
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
 
+    # 【重要】設定が変更されたかチェック
+    current_cfg = f"{mode}-{s_no}-{e_no}-{quiz_target}"
+    if 'last_cfg' in st.session_state and st.session_state.last_cfg != current_cfg:
+        st.session_state.reset_q = True
+    st.session_state.last_cfg = current_cfg
+
     if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
         sheet = get_sheet()
         if sheet:
@@ -109,7 +114,7 @@ if mode != "単語帳":
                 sheet.update_cells(cell_list)
             st.cache_data.clear(); st.session_state.reset_q = True; st.rerun()
 
-# --- 6. クイズ表示ロジック ---
+# --- 6. メインコンテンツ ---
 if mode == "単語帳":
     st.title("📖 単語帳")
     st.dataframe(pd.DataFrame(st.session_state.all_words)[['no', 'en', 'ja']], hide_index=True, use_container_width=True)
@@ -117,9 +122,9 @@ else:
     active_list = pending_words if quiz_target == "復習のみ" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
     
     if 'q' not in st.session_state or st.session_state.get('reset_q'):
-        if not active_list: st.warning("対象となる単語がありません。"); st.stop()
+        if not active_list: st.warning("条件に合う単語がありません。範囲や対象を確認してください。"); st.stop()
         target = random.choice(active_list)
-        others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], 3)
+        others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], min(len(st.session_state.all_words)-1, 3))
         choices = others + [target]; random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
         st.session_state.reset_q = False
@@ -127,24 +132,26 @@ else:
     q = st.session_state.q
     match = gs_dict.get(str(q['t']['en']).strip(), {})
     
-    # ステータス情報の表示
+    # ステータス情報の取得
     display_no = int(float(q['t'].get('no', 0)))
+    try: total_shown = int(float(str(match.get('total_shown', 0)).strip())) if match else 0
+    except: total_shown = 0
     try: curr_ok = int(float(str(match.get('count', 0)).strip())) if match else 0
     except: curr_ok = 0
 
+    # メイン画面表示（復習語数は出さず、学習回数を出す）
     st.markdown(f"""
         <p class="status-text">
-            No.{display_no} | 🔄 復習残り: {len(pending_words)}語 | 🔥 あと {max(0, 5 - curr_ok)} 回正解で完了
+            No.{display_no} | 📊 学習回数: {total_shown}回 | 🔥 あと {max(0, 5 - curr_ok)} 回で完了
         </p>
     """, unsafe_allow_html=True)
 
-    # 問題文を大きく表示
+    # 問題文
     display_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
     st.markdown(f"<h1 style='text-align: center; font-size: 3.5rem; padding: 20px 0;'>{display_text}</h1>", unsafe_allow_html=True)
 
-    # 選択肢ボタン
+    # 回答アクション
     if not q["ans"]:
-        st.write("") 
         cols = st.columns(2)
         for i, c in enumerate(q["c"]):
             label = c['ja'] if mode == "英→日クイズ" else c['en']
@@ -158,9 +165,7 @@ else:
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True; st.session_state.res_type = "unknown"; sync_result(q['t'], "unknown"); st.rerun()
     else:
-        # 結果表示
-        res = st.session_state.res_type
-        if res == "ok":
+        if st.session_state.res_type == "ok":
             st.success(f"🎯 正解！ {q['t']['en']} : {q['t']['ja']}")
         else:
             st.error(f"答え: {q['t']['en']} : {q['t']['ja']}")
