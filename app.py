@@ -27,31 +27,37 @@ def text_to_speech(text):
         """
         components.html(js_code, height=0)
 
-# --- 3. スタイル設定（見た目を以前の「#」風に固定） ---
+# --- 3. スタイル設定（問題文をさらに大きく） ---
 def set_ui_style():
     st.markdown("""
         <style>
-        /* 問題文ボタンを、以前の # (H1) と同じ見た目にする */
+        /* 問題文ボタンのスタイル：以前のレイアウトを維持しつつ巨大化 */
         .stButton > button[kind="secondary"] {
             border: none !important;
             background-color: transparent !important;
-            padding: 0 !important;
+            padding: 20px 0 !important;
             color: #31333F !important;
-            text-align: left !important;
-            font-size: 2.25rem !important; /* H1相当のサイズ */
-            font-weight: 700 !important;    /* 太字 */
+            text-align: center !important; /* 中央寄せでインパクトを出す */
+            font-size: 3.5rem !important;  /* さらに大きく */
+            font-weight: 800 !important;
             display: block !important;
             width: 100% !important;
-            line-height: 1.2 !important;
+            line-height: 1.1 !important;
         }
-        /* タップ時の反応 */
         .stButton > button[kind="secondary"]:active {
             opacity: 0.7;
+        }
+        /* ステータス情報の微調整 */
+        .status-text {
+            font-size: 0.9rem;
+            color: #666;
+            text-align: center;
+            margin-bottom: 5px;
         }
         </style>
     """, unsafe_allow_html=True)
 
-# --- 4. スプレッドシート連携 (変更なし) ---
+# --- 4. スプレッドシート連携 ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -114,7 +120,7 @@ if not st.session_state.started:
         st.rerun()
     st.stop()
 
-# --- 6. サイドバー ---
+# --- 6. データ管理とサイドバー ---
 gs_rows = load_gs_data()
 pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
@@ -122,6 +128,7 @@ gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
 st.sidebar.title("🎓 学習メニュー")
 mode = st.sidebar.selectbox("モード", ["英→日クイズ", "日→英クイズ", "単語帳"])
 st.sidebar.divider()
+st.sidebar.metric("復習が必要な単語数", f"{len(pending_words)} 語")
 
 if mode != "単語帳":
     nos = [int(w['no']) for w in st.session_state.all_words] or [0]
@@ -157,14 +164,21 @@ else:
 
     q = st.session_state.q
     match = gs_dict.get(str(q['t']['en']).strip(), {})
-    total_s = int(float(str(match.get('total_shown', 0)))) if match else 0
     
-    st.write(f"No.{int(float(q['t']['no']))} | 📊 学習: {total_s}回目")
+    # --- ステータス表示の強化 ---
+    display_no = int(float(q['t'].get('no', 0)))
+    try: curr_ok = int(float(str(match.get('count', 0)).strip())) if match else 0
+    except: curr_ok = 0
+    
+    # 画面上部に情報を集約
+    st.markdown(f"""
+        <p class="status-text">
+            No.{display_no} | 🔄 復習残り: {len(pending_words)}語 | 🔥 あと {max(0, 5 - curr_ok)} 回正解で完了
+        </p>
+    """, unsafe_allow_html=True)
 
-    # --- 【以前のレイアウトを維持】 ---
+    # --- 巨大化した問題文ボタン ---
     display_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
-    
-    # 見た目は以前の # {display_text} と同じですが、クリックすると音が鳴ります
     if st.button(display_text, key="q_text_btn"):
         text_to_speech(q['t']['en'])
 
