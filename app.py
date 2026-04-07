@@ -45,6 +45,7 @@ def load_gs_data():
     try:
         data = sheet.get_all_values()
         if len(data) < 2: return []
+        # 列構成: 0:en, 1:ja, 2:count, 3:no, 4:total_shown, 5:is_done
         return [{'en': r[0], 'ja': r[1], 'count': r[2], 'no': r[3], 'total_shown': r[4], 'is_done': r[5]} for r in data[1:] if len(r) >= 2]
     except: return []
 
@@ -57,11 +58,13 @@ def sync_result(word_dict, res_type):
         if en_target in all_col1:
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
-            # 学習回数（5列目）を更新
+            
+            # 学習回数（5列目）をインクリメント
             try: old_s = int(float(str(row_data[4]))) if len(row_data) > 4 else 0
             except: old_s = 0
             sheet.update_cell(row_idx, 5, old_s + 1)
-            # 正解数（3列目）を更新
+            
+            # 正解数（3列目）と完了フラグ（6列目）の更新
             if res_type == 'ok':
                 try: old_c = int(float(str(row_data[2]))) if len(row_data) > 2 else 0
                 except: old_c = 0
@@ -69,7 +72,8 @@ def sync_result(word_dict, res_type):
                 sheet.update_cell(row_idx, 3, 5 if new_c >= 5 else new_c)
                 if new_c >= 5: sheet.update_cell(row_idx, 6, 1)
             else:
-                sheet.update_cell(row_idx, 3, 0); sheet.update_cell(row_idx, 6, 0)
+                sheet.update_cell(row_idx, 3, 0)
+                sheet.update_cell(row_idx, 6, 0)
     except: pass
     st.cache_data.clear()
 
@@ -82,7 +86,7 @@ if 'all_words' not in st.session_state:
         st.session_state.all_words = df.to_dict('records')
     else: st.session_state.all_words = []
 
-# --- 5. サイドバーと設定監視 ---
+# --- 5. サイドバーと設定変更監視 ---
 gs_rows = load_gs_data()
 pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
@@ -99,20 +103,26 @@ if mode != "単語帳":
     with col2: e_no = st.number_input("終了No.", min(nos), max(nos), max(nos))
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
 
-    # 【重要】設定が変更されたかチェック
+    # 設定変更を検知して問題をリセット
     current_cfg = f"{mode}-{s_no}-{e_no}-{quiz_target}"
     if 'last_cfg' in st.session_state and st.session_state.last_cfg != current_cfg:
         st.session_state.reset_q = True
     st.session_state.last_cfg = current_cfg
 
+    st.sidebar.markdown("---")
     if st.sidebar.button("🔄 出題頻度のみリセット", use_container_width=True):
         sheet = get_sheet()
         if sheet:
             rows = len(sheet.get_all_values())
             if rows > 1:
-                cell_list = sheet.range(2, 5, rows, 5); [setattr(c, 'value', 0) for c in cell_list]
+                # 5列目（学習回数）を一括で0に
+                cell_list = sheet.range(2, 5, rows, 5)
+                for cell in cell_list: cell.value = 0
                 sheet.update_cells(cell_list)
-            st.cache_data.clear(); st.session_state.reset_q = True; st.rerun()
+            st.cache_data.clear()
+            st.session_state.reset_q = True
+            st.success("学習回数をリセットしました")
+            st.rerun()
 
 # --- 6. メインコンテンツ ---
 if mode == "単語帳":
@@ -122,8 +132,17 @@ else:
     active_list = pending_words if quiz_target == "復習のみ" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
     
     if 'q' not in st.session_state or st.session_state.get('reset_q'):
-        if not active_list: st.warning("条件に合う単語がありません。範囲や対象を確認してください。"); st.stop()
-        target = random.choice(active_list)
+        if not active_list: st.warning("条件に合う単語がありません。"); st.stop()
+        
+        # 学習回数に基づく重み付け（少ないほど出やすい）
+        weights = []
+        for w in active_list:
+            match = gs_dict.get(str(w['en']).strip(), {})
+            try: s_num = float(str(match.get('total_shown', 0)).strip())
+            except: s_num = 0.0
+            weights.append(1.0 / (s_num + 1.0))
+        
+        target = random.choices(active_list, weights=weights, k=1)[0]
         others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], min(len(st.session_state.all_words)-1, 3))
         choices = others + [target]; random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
@@ -132,25 +151,24 @@ else:
     q = st.session_state.q
     match = gs_dict.get(str(q['t']['en']).strip(), {})
     
-    # ステータス情報の取得
+    # ステータス表示
     display_no = int(float(q['t'].get('no', 0)))
     try: total_shown = int(float(str(match.get('total_shown', 0)).strip())) if match else 0
     except: total_shown = 0
     try: curr_ok = int(float(str(match.get('count', 0)).strip())) if match else 0
     except: curr_ok = 0
 
-    # メイン画面表示（復習語数は出さず、学習回数を出す）
     st.markdown(f"""
         <p class="status-text">
             No.{display_no} | 📊 学習回数: {total_shown}回 | 🔥 あと {max(0, 5 - curr_ok)} 回で完了
         </p>
     """, unsafe_allow_html=True)
 
-    # 問題文
+    # 問題文を大きく表示
     display_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
     st.markdown(f"<h1 style='text-align: center; font-size: 3.5rem; padding: 20px 0;'>{display_text}</h1>", unsafe_allow_html=True)
 
-    # 回答アクション
+    # 回答エリア
     if not q["ans"]:
         cols = st.columns(2)
         for i, c in enumerate(q["c"]):
