@@ -19,35 +19,39 @@ def set_button_color(color_code):
             color: white !important;
             border: None !important;
         }}
-        /* H1（問題文）をクリック可能にするためのカーソル設定のみ追加 */
+        /* 問題文（H1）の見た目は変えず、クリック可能であることを示す設定のみ */
         h1 {{
             cursor: pointer;
             user-select: none;
+            -webkit-tap-highlight-color: transparent;
         }}
         </style>
     """, unsafe_allow_html=True)
 
-# --- 音声再生・クリック検知用JavaScript ---
+# --- 音声再生ロジック (自動再生 & クリック再生) ---
 def add_voice_logic(text):
     if text:
+        # クリーンな文字列にするためにエスケープ処理
+        safe_text = text.replace('"', '\\"')
         js_code = f"""
             <script>
-            // 1. 即座に再生（自動再生）
             function speak() {{
                 window.speechSynthesis.cancel();
                 var msg = new SpeechSynthesisUtterance();
-                msg.text = "{text}";
+                msg.text = "{safe_text}";
                 msg.lang = "en-US";
                 msg.rate = 1.0;
                 window.speechSynthesis.speak(msg);
             }}
-            
-            // 初回実行
-            setTimeout(speak, 100);
 
-            // 2. H1要素（問題文）を探してクリックイベントを付与
-            parent.document.querySelectorAll('h1').forEach(function(el) {{
-                el.onclick = function() {{ speak(); }};
+            // 1. 問題切り替わり時の自動再生 (少し遅延させて確実に実行)
+            setTimeout(speak, 300);
+
+            // 2. 問題文(H1)をクリックした時の再生設定
+            // Streamlitのiframeの外側(親画面)のH1を探してイベントを付与
+            const h1Elements = window.parent.document.querySelectorAll('h1');
+            h1Elements.forEach(el => {{
+                el.onclick = speak;
             }});
             </script>
         """
@@ -222,11 +226,12 @@ else:
 
     st.write(f"No.{display_no}{status}")
     
-    # 【ここが重要】元の表示方法（st.markdownのH1）を完全に維持
+    # 問題文の表示（昨夜と同じ st.markdown("# ")）
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
     
-    # 音声ロジック（見た目には影響しない）を流し込む
+    # 音声読み上げロジック（自動再生 ＋ クリック再生）を注入
+    # 常に英語の正解単語（q['t']['en']）を読み上げ対象にする
     add_voice_logic(q['t']['en'])
 
     if not q["ans"]:
