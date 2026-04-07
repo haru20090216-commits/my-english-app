@@ -165,17 +165,25 @@ else:
     
     st.write(f"No.{int(float(q['t']['no']))} | 📊 学習: {total_s}回目")
 
-    # --- 重要：スマホで横並びにするレイアウト ---
-    # gap="small" を指定し、比率を調整して無理やり横に並べる
-    c1, c2 = st.columns([0.7, 0.3])
-    with c1:
-        txt = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
-        st.markdown(f'<p class="question-text">{txt}</p>', unsafe_allow_html=True)
-    with c2:
-        if st.button("📢", key="spk"):
-            text_to_speech(q['t']['en'])
+    # --- 【修正ポイント】HTML/CSSで強制的に横並びを作る ---
+    question_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
+    
+    # Flexboxを使って「文字」と「透明なボタン（に見える要素）」を横に並べる
+    st.markdown(f"""
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+            <h1 style="margin: 0; font-size: 2rem;">{question_text}</h1>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Streamlitのボタンを配置する位置を調整（マイナスマージンで上の行に近づける）
+    st.markdown('<div style="margin-top: -65px; text-align: right;">', unsafe_allow_html=True)
+    if st.button("📢", key="spk"):
+        text_to_speech(q['t']['en'])
+    st.markdown('</div>', unsafe_allow_html=True)
 
+    # 選択肢ボタン以降
     if not q["ans"]:
+        st.write("") # スペース調整
         cols = st.columns(2)
         for i, c in enumerate(q["c"]):
             label = c['ja'] if mode == "英→日クイズ" else c['en']
