@@ -31,6 +31,10 @@ def set_button_color(color_code):
             color: white !important;
             border: None !important;
         }}
+        /* 📢ボタンを小さく配置するためのスタイル */
+        .stButton button {{
+            padding: 0.2rem 0.5rem;
+        }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -168,7 +172,7 @@ else:
         choices = others + [target]; random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}; st.session_state.reset_q = False
         
-        # 【新規】出題時に自動で音声を流す
+        # 出題時に自動で音声を流す
         text_to_speech(target['en'])
 
     q = st.session_state.q
@@ -176,6 +180,7 @@ else:
     try: display_no = int(float(q['t'].get('no', 0)))
     except: display_no = 0
     
+    # 状態表示
     status = ""
     if matching_gs:
         is_done = str(matching_gs.get('is_done', 0)) == '1'
@@ -191,12 +196,14 @@ else:
 
     st.write(f"No.{display_no}{status}")
     
-    col_q, col_v = st.columns([0.8, 0.2])
+    # --- 問題文と📢ボタンを横並びに配置 ---
+    col_q, col_v = st.columns([0.85, 0.15])
     with col_q:
         question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
-        st.markdown(f"# {question_text}")
+        st.markdown(f"## {question_text}")
     with col_v:
-        if st.button("📢"):
+        # このボタンは答え合わせ後もずっと表示されます
+        if st.button("📢", key="speech_btn"):
             text_to_speech(q['t']['en'])
 
     if not q["ans"]:
@@ -211,8 +218,7 @@ else:
                     sync_result(q['t'], st.session_state.res_type)
                     st.rerun()
         if st.button("❓ わからない", use_container_width=True):
-            q["ans"] = True; st.session_state.res_type = "unknown"; sync_result(q['t'], "unknown")
-            st.rerun()
+            q["ans"] = True; st.session_state.res_type = "unknown"; sync_result(q['t'], "unknown"); st.rerun()
     else:
         ans_text = f"{q['t']['en']} : {q['t']['ja']}"
         if st.session_state.res_type == "ok":
@@ -222,10 +228,6 @@ else:
             msg = "💡 答え" if st.session_state.res_type == "unknown" else "❌ 残念..."
             st.error(f"{msg}\n\n正解は: {ans_text}")
         
-        # 【新規】答え合わせ画面で音声再生ボタンを配置（自動再生はしない）
-        if st.button("🔊 発音を聴く", use_container_width=True):
-            text_to_speech(q['t']['en'])
-
         if st.button("次の問題へ ➡️", use_container_width=True):
             st.session_state.reset_q = True; st.rerun()
 
