@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import random
 import pandas as pd
 import gspread
@@ -9,7 +10,22 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. スタイル設定 ---
+# --- 2. 音声再生用関数 ---
+def text_to_speech(text):
+    if text:
+        js_code = f"""
+            <script>
+            window.speechSynthesis.cancel();
+            var msg = new SpeechSynthesisUtterance();
+            msg.text = "{text}";
+            msg.lang = "en-US";
+            msg.rate = 1.0;
+            window.speechSynthesis.speak(msg);
+            </script>
+        """
+        components.html(js_code, height=0)
+
+# --- 3. スタイル設定 ---
 def set_button_color(color_code):
     st.markdown(f"""
         <style>
@@ -18,10 +34,14 @@ def set_button_color(color_code):
             color: white !important;
             border: None !important;
         }}
+        /* 📢ボタン用のコンパクト設定 */
+        .stButton button {{
+            padding: 0.2rem 0.5rem !important;
+        }}
         </style>
     """, unsafe_allow_html=True)
 
-# --- 3. Googleスプレッドシート連携 ---
+# --- 4. Googleスプレッドシート連携 ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -62,13 +82,11 @@ def sync_result(word_dict, res_type):
         if en_target in all_col1:
             row_idx = all_col1.index(en_target) + 1
             row_data = sheet.row_values(row_idx)
-            # 学習回数（5列目）をインクリメント
             try:
                 raw_shown = row_data[4] if len(row_data) >= 5 else 0
                 old_shown = int(float(str(raw_shown).strip())) if str(raw_shown).strip() else 0
             except: old_shown = 0
             sheet.update_cell(row_idx, 5, old_shown + 1)
-            # 正解数（3列目）と完了フラグ（6列目）の更新
             if res_type == 'ok':
                 try:
                     raw_count = row_data[2] if len(row_data) >= 3 else 0
@@ -84,7 +102,7 @@ def sync_result(word_dict, res_type):
     except: pass
     st.cache_data.clear()
 
-# --- 4. データ準備 ---
+# --- 5. データロードと開始判定 ---
 if 'all_words' not in st.session_state:
     path = "words.csv"
     if os.path.exists(path):
@@ -92,11 +110,21 @@ if 'all_words' not in st.session_state:
         st.session_state.all_words = df.to_dict('records')
     else: st.session_state.all_words = []
 
+if 'started' not in st.session_state:
+    st.session_state.started = False
+
+if not st.session_state.started:
+    st.title("🎓 英単語マスター")
+    if st.button("🚀 学習を始める (音声を許可)", use_container_width=True):
+        st.session_state.started = True
+        st.rerun()
+    st.stop()
+
+# --- 6. サイドバー ---
 gs_rows = load_gs_data()
 pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
 
-# --- 5. サイドバー ---
 st.sidebar.title("🎓 学習メニュー")
 mode = st.sidebar.selectbox("モード", ["英→日クイズ", "日→英クイズ", "単語帳"])
 st.sidebar.divider()
@@ -109,10 +137,9 @@ if mode != "単語帳":
     with col2: e_no = st.number_input("終了No.", min(nos), max(nos), max(nos))
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
 
-    current_settings = f"{s_no}-{e_no}-{quiz_target}-{mode}"
-    if 'last_settings' in st.session_state and st.session_state.last_settings != current_settings:
+    if 'last_settings' in st.session_state and st.session_state.last_settings != f"{s_no}-{e_no}-{quiz_target}-{mode}":
         st.session_state.reset_q = True
-    st.session_state.last_settings = current_settings
+    st.session_state.last_settings = f"{s_no}-{e_no}-{quiz_target}-{mode}"
     active_list = pending_words if quiz_target == "復習のみ" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
 
     st.sidebar.markdown("---")
@@ -121,41 +148,31 @@ if mode != "単語帳":
         if sheet:
             rows = len(sheet.get_all_values())
             if rows > 1:
-                # 5列目（学習回数）を一括で0に更新
-                cell_list = sheet.range(2, 5, rows, 5)
-                for cell in cell_list: cell.value = 0
+                cell_list = sheet.range(2, 5, rows, 5); [setattr(c, 'value', 0) for c in cell_list]
                 sheet.update_cells(cell_list)
-            st.cache_data.clear()
-            st.session_state.reset_q = True
-            st.success("頻度データをリセットしました")
-            st.rerun()
+            st.cache_data.clear(); st.session_state.reset_q = True; st.rerun()
 
-# --- 6. メインコンテンツ ---
+# --- 7. メインコンテンツ ---
 if mode == "単語帳":
     st.title("📖 単語帳")
     st.dataframe(pd.DataFrame(st.session_state.all_words)[['no', 'en', 'ja']], hide_index=True, use_container_width=True)
 else:
     if 'q' not in st.session_state or st.session_state.get('reset_q'):
         if not active_list: st.warning("対象となる単語がありません。"); st.stop()
-        
-        # 学習回数に基づく重み付け（少ないほど出やすい）
         weights = []
         for w in active_list:
             match = gs_dict.get(str(w['en']).strip(), {})
             try: s_num = float(str(match.get('total_shown', 0)).strip())
             except: s_num = 0.0
             weights.append(1.0 / (s_num + 1.0))
-        
         target = random.choices(active_list, weights=weights, k=1)[0]
         others = random.sample([w for w in st.session_state.all_words if str(w['en']).strip() != str(target['en']).strip()], min(len(st.session_state.all_words)-1, 3))
         choices = others + [target]; random.shuffle(choices)
-        st.session_state.q = {"t": target, "c": choices, "ans": False}
-        st.session_state.reset_q = False
+        st.session_state.q = {"t": target, "c": choices, "ans": False}; st.session_state.reset_q = False
+        text_to_speech(target['en']) # 出題時に音声を流す
 
     q = st.session_state.q
     matching_gs = gs_dict.get(str(q['t']['en']).strip(), {})
-    
-    # ステータス表示（No、あと何回、学習回数）
     try: display_no = int(float(q['t'].get('no', 0)))
     except: display_no = 0
     
@@ -173,7 +190,14 @@ else:
     else: status = " | 📊 学習: 初回"
 
     st.write(f"No.{display_no}{status}")
-    st.markdown(f"# {q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']}")
+    
+    # レイアウトを維持しつつ、問題文の横に📢を配置
+    col_txt, col_btn = st.columns([0.85, 0.15])
+    with col_txt:
+        st.markdown(f"# {q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']}")
+    with col_btn:
+        if st.button("📢", key="speech"):
+            text_to_speech(q['t']['en'])
 
     if not q["ans"]:
         cols = st.columns(2)
