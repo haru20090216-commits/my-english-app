@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import random
 import pandas as pd
 import gspread
@@ -10,44 +9,15 @@ import os
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="英単語マスター", page_icon="🎓", layout="centered")
 
-# --- 2. 音声再生用JavaScript ---
-def text_to_speech(text):
-    if text:
-        js_code = f"""
-            <script>
-            (function() {{
-                window.speechSynthesis.cancel();
-                var msg = new SpeechSynthesisUtterance();
-                msg.text = "{text}";
-                msg.lang = "en-US";
-                msg.rate = 1.0;
-                window.speechSynthesis.speak(msg);
-            }})();
-            </script>
-        """
-        components.html(js_code, height=0)
-
-# --- 3. スタイル設定（問題文をさらに大きく） ---
+# --- 2. スタイル設定 ---
 def set_ui_style():
     st.markdown("""
         <style>
-        /* 問題文ボタンのスタイル：以前のレイアウトを維持しつつ巨大化 */
-        .stButton > button[kind="secondary"] {
-            border: none !important;
-            background-color: transparent !important;
-            padding: 20px 0 !important;
-            color: #31333F !important;
-            text-align: center !important; /* 中央寄せでインパクトを出す */
-            font-size: 3.5rem !important;  /* さらに大きく */
-            font-weight: 800 !important;
-            display: block !important;
-            width: 100% !important;
-            line-height: 1.1 !important;
+        /* ボタンの角を丸くする */
+        div.stButton > button:first-child {
+            border-radius: 10px;
         }
-        .stButton > button[kind="secondary"]:active {
-            opacity: 0.7;
-        }
-        /* ステータス情報の微調整 */
+        /* ステータス情報のテキストスタイル */
         .status-text {
             font-size: 0.9rem;
             color: #666;
@@ -57,7 +27,7 @@ def set_ui_style():
         </style>
     """, unsafe_allow_html=True)
 
-# --- 4. スプレッドシート連携 ---
+# --- 3. Googleスプレッドシート連携 ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -102,25 +72,18 @@ def sync_result(word_dict, res_type):
     except: pass
     st.cache_data.clear()
 
-# --- 5. データロードと開始画面 ---
+# --- 4. データロード ---
 set_ui_style()
 
 if 'all_words' not in st.session_state:
-    df = pd.read_csv("words.csv")
-    df['no'] = pd.to_numeric(df['no'], errors='coerce').fillna(0)
-    st.session_state.all_words = df.to_dict('records')
+    if os.path.exists("words.csv"):
+        df = pd.read_csv("words.csv")
+        df['no'] = pd.to_numeric(df['no'], errors='coerce').fillna(0)
+        st.session_state.all_words = df.to_dict('records')
+    else:
+        st.session_state.all_words = []
 
-if 'started' not in st.session_state:
-    st.session_state.started = False
-
-if not st.session_state.started:
-    st.title("🎓 英単語マスター")
-    if st.button("🚀 学習を始める (音声を許可)", use_container_width=True):
-        st.session_state.started = True
-        st.rerun()
-    st.stop()
-
-# --- 6. データ管理とサイドバー ---
+# --- 5. サイドバー ---
 gs_rows = load_gs_data()
 pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
 gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
@@ -146,43 +109,40 @@ if mode != "単語帳":
                 sheet.update_cells(cell_list)
             st.cache_data.clear(); st.session_state.reset_q = True; st.rerun()
 
-# --- 7. クイズ表示ロジック ---
+# --- 6. クイズ表示ロジック ---
 if mode == "単語帳":
     st.title("📖 単語帳")
-    st.dataframe(pd.DataFrame(st.session_state.all_words)[['no', 'en', 'ja']], hide_index=True)
+    st.dataframe(pd.DataFrame(st.session_state.all_words)[['no', 'en', 'ja']], hide_index=True, use_container_width=True)
 else:
     active_list = pending_words if quiz_target == "復習のみ" else [w for w in st.session_state.all_words if s_no <= w['no'] <= e_no]
     
     if 'q' not in st.session_state or st.session_state.get('reset_q'):
-        if not active_list: st.warning("対象なし"); st.stop()
+        if not active_list: st.warning("対象となる単語がありません。"); st.stop()
         target = random.choice(active_list)
         others = random.sample([w for w in st.session_state.all_words if w['en'] != target['en']], 3)
         choices = others + [target]; random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
         st.session_state.reset_q = False
-        text_to_speech(target['en'])
 
     q = st.session_state.q
     match = gs_dict.get(str(q['t']['en']).strip(), {})
     
-    # --- ステータス表示の強化 ---
+    # ステータス情報の表示
     display_no = int(float(q['t'].get('no', 0)))
     try: curr_ok = int(float(str(match.get('count', 0)).strip())) if match else 0
     except: curr_ok = 0
-    
-    # 画面上部に情報を集約
+
     st.markdown(f"""
         <p class="status-text">
             No.{display_no} | 🔄 復習残り: {len(pending_words)}語 | 🔥 あと {max(0, 5 - curr_ok)} 回正解で完了
         </p>
     """, unsafe_allow_html=True)
 
-    # --- 巨大化した問題文ボタン ---
+    # 問題文を大きく表示
     display_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
-    if st.button(display_text, key="q_text_btn"):
-        text_to_speech(q['t']['en'])
+    st.markdown(f"<h1 style='text-align: center; font-size: 3.5rem; padding: 20px 0;'>{display_text}</h1>", unsafe_allow_html=True)
 
-    # 選択肢
+    # 選択肢ボタン
     if not q["ans"]:
         st.write("") 
         cols = st.columns(2)
@@ -191,12 +151,14 @@ else:
             with cols[i % 2]:
                 if st.button(label, key=f"b{i}", use_container_width=True):
                     q["ans"] = True
-                    st.session_state.res_type = "ok" if c['en'] == q['t']['en'] else "ng"
+                    is_correct = (str(c['en']).strip() == str(q['t']['en']).strip())
+                    st.session_state.res_type = "ok" if is_correct else "ng"
                     sync_result(q['t'], st.session_state.res_type)
                     st.rerun()
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True; st.session_state.res_type = "unknown"; sync_result(q['t'], "unknown"); st.rerun()
     else:
+        # 結果表示
         res = st.session_state.res_type
         if res == "ok":
             st.success(f"🎯 正解！ {q['t']['en']} : {q['t']['ja']}")
@@ -208,5 +170,5 @@ else:
 
         st.divider()
         for choice in q["c"]:
-            mark = "✅" if choice['en'] == q['t']['en'] else "・"
+            mark = "✅" if str(choice['en']).strip() == str(q['t']['en']).strip() else "・"
             st.write(f"{mark} **{choice['en']}** : {choice['ja']}")
