@@ -165,25 +165,40 @@ else:
     
     st.write(f"No.{int(float(q['t']['no']))} | 📊 学習: {total_s}回目")
 
-    # --- 【修正ポイント】HTML/CSSで強制的に横並びを作る ---
+    # --- 【解決策】絶対横並びにするHTML構造 ---
     question_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
-    
-    # Flexboxを使って「文字」と「透明なボタン（に見える要素）」を横に並べる
-    st.markdown(f"""
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
-            <h1 style="margin: 0; font-size: 2rem;">{question_text}</h1>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # Streamlitのボタンを配置する位置を調整（マイナスマージンで上の行に近づける）
-    st.markdown('<div style="margin-top: -65px; text-align: right;">', unsafe_allow_html=True)
-    if st.button("📢", key="spk"):
-        text_to_speech(q['t']['en'])
-    st.markdown('</div>', unsafe_allow_html=True)
 
-    # 選択肢ボタン以降
+    # 1. まず「📢」ボタンを右側に浮かせる(float)
+    # 2. その後にテキストを表示する
+    # これにより、文字の長さに関わらずボタンが右上に固定されます
+    col_v, col_q = st.columns([0.8, 0.2]) # ここではあえて使わず、下で重ねます
+    
+    # 手法：コンテナを1つ作り、中にボタンを右寄せで配置
+    container = st.container()
+    with container:
+        # 右寄せのボタンエリア
+        html_btn = st.empty() 
+        # 重なりを作るためのCSS調整
+        st.markdown("""
+            <style>
+            .stButton { text-align: right; }
+            .q-wrapper { 
+                margin-top: -50px; 
+                padding-right: 60px; 
+                word-wrap: break-word;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        if st.button("📢", key="spk_btn"):
+            text_to_speech(q['t']['en'])
+            
+        # ボタンのすぐ上に文字を食い込ませる
+        st.markdown(f'<div class="q-wrapper"><h1>{question_text}</h1></div>', unsafe_allow_html=True)
+
+    # --- 選択肢ボタン ---
     if not q["ans"]:
-        st.write("") # スペース調整
+        st.write("") # スペース確保
         cols = st.columns(2)
         for i, c in enumerate(q["c"]):
             label = c['ja'] if mode == "英→日クイズ" else c['en']
@@ -196,7 +211,6 @@ else:
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True; st.session_state.res_type = "unknown"; sync_result(q['t'], "unknown"); st.rerun()
     else:
-        # 回答後の表示
         res = st.session_state.res_type
         if res == "ok":
             st.success(f"🎯 正解！ {q['t']['en']} : {q['t']['ja']}")
