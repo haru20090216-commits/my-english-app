@@ -19,41 +19,36 @@ def set_button_color(color_code):
             color: white !important;
             border: None !important;
         }}
-        /* 問題文（H1）を巨大化し、クリック可能（再生ボタン化）にするスタイル */
-        .speech-main {{
-            text-align: center;
+        /* H1（問題文）をクリック可能にするためのカーソル設定のみ追加 */
+        h1 {{
             cursor: pointer;
-            transition: opacity 0.2s;
-            padding: 20px 0;
             user-select: none;
-        }}
-        .speech-main h1 {{
-            font-size: 3.5rem !important;
-            margin: 0;
-            display: inline-block;
-        }}
-        .speech-main:hover {{
-            opacity: 0.7;
-        }}
-        .speech-main:active {{
-            opacity: 0.4;
         }}
         </style>
     """, unsafe_allow_html=True)
 
-# --- 音声再生用関数 ---
-def text_to_speech(text):
+# --- 音声再生・クリック検知用JavaScript ---
+def add_voice_logic(text):
     if text:
         js_code = f"""
             <script>
-            (function() {{
+            // 1. 即座に再生（自動再生）
+            function speak() {{
                 window.speechSynthesis.cancel();
                 var msg = new SpeechSynthesisUtterance();
                 msg.text = "{text}";
                 msg.lang = "en-US";
                 msg.rate = 1.0;
                 window.speechSynthesis.speak(msg);
-            }})();
+            }}
+            
+            // 初回実行
+            setTimeout(speak, 100);
+
+            // 2. H1要素（問題文）を探してクリックイベントを付与
+            parent.document.querySelectorAll('h1').forEach(function(el) {{
+                el.onclick = function() {{ speak(); }};
+            }});
             </script>
         """
         components.html(js_code, height=0)
@@ -204,8 +199,6 @@ else:
         random.shuffle(choices)
         st.session_state.q = {"t": target, "c": choices, "ans": False}
         st.session_state.reset_q = False
-        # 新しい問題が出た時に自動再生
-        text_to_speech(target['en'])
 
     q = st.session_state.q
     matching_gs = gs_dict.get(str(q['t']['en']).strip(), {})
@@ -229,27 +222,12 @@ else:
 
     st.write(f"No.{display_no}{status}")
     
+    # 【ここが重要】元の表示方法（st.markdownのH1）を完全に維持
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
+    st.markdown(f"# {question_text}")
     
-    # 問題文そのものを透明なボタンで覆い、一体化させる
-    st.markdown(f'<div class="speech-main">', unsafe_allow_html=True)
-    if st.button(question_text, key="integrated_speech_btn", help="クリックして再生", use_container_width=True):
-        text_to_speech(q['t']['en'])
-    st.markdown('</div>', unsafe_allow_html=True)
-    # ボタン自体をH1風に見せるためのスタイル上書き
-    st.markdown("""
-        <style>
-        div[data-testid="stButton"] > button[key="integrated_speech_btn"] {
-            font-size: 3.5rem !important;
-            font-weight: bold !important;
-            background-color: transparent !important;
-            color: inherit !important;
-            border: none !important;
-            padding: 0 !important;
-            height: auto !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    # 音声ロジック（見た目には影響しない）を流し込む
+    add_voice_logic(q['t']['en'])
 
     if not q["ans"]:
         cols = st.columns(2)
