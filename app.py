@@ -27,34 +27,31 @@ def text_to_speech(text):
         """
         components.html(js_code, height=0)
 
-# --- 3. スタイル設定 ---
+# --- 3. スタイル設定（見た目を以前の「#」風に固定） ---
 def set_ui_style():
     st.markdown("""
         <style>
-        /* 問題文ボタンの装飾：枠線を消し、通常のテキストに近い見た目に */
+        /* 問題文ボタンを、以前の # (H1) と同じ見た目にする */
         .stButton > button[kind="secondary"] {
             border: none !important;
             background-color: transparent !important;
             padding: 0 !important;
-            color: #31333F !important; /* Streamlitの標準テキスト色 */
+            color: #31333F !important;
             text-align: left !important;
+            font-size: 2.25rem !important; /* H1相当のサイズ */
+            font-weight: 700 !important;    /* 太字 */
             display: block !important;
             width: 100% !important;
-            transition: opacity 0.2s;
+            line-height: 1.2 !important;
         }
-        /* タップした時に少し薄くして反応を出す */
+        /* タップ時の反応 */
         .stButton > button[kind="secondary"]:active {
-            opacity: 0.6;
-        }
-        /* H1タグ相当のサイズ感に調整 */
-        .stButton > button[kind="secondary"] h1 {
-            margin: 0;
-            padding: 10px 0;
+            opacity: 0.7;
         }
         </style>
     """, unsafe_allow_html=True)
 
-# --- 4. スプレッドシート連携 (省略なし) ---
+# --- 4. スプレッドシート連携 (変更なし) ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -164,11 +161,11 @@ else:
     
     st.write(f"No.{int(float(q['t']['no']))} | 📊 学習: {total_s}回目")
 
-    # --- 問題文そのものをタップ可能なエリアにする ---
+    # --- 【以前のレイアウトを維持】 ---
     display_text = q['t']['en'] if mode == '英→日クイズ' else q['t']['ja']
     
-    # 見た目はテキストだが、クリックすると発音が流れる
-    if st.button(f"# {display_text}", key="q_text_btn"):
+    # 見た目は以前の # {display_text} と同じですが、クリックすると音が鳴ります
+    if st.button(display_text, key="q_text_btn"):
         text_to_speech(q['t']['en'])
 
     # 選択肢
@@ -186,7 +183,6 @@ else:
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True; st.session_state.res_type = "unknown"; sync_result(q['t'], "unknown"); st.rerun()
     else:
-        # 回答後の結果表示
         res = st.session_state.res_type
         if res == "ok":
             st.success(f"🎯 正解！ {q['t']['en']} : {q['t']['ja']}")
