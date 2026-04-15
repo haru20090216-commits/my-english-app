@@ -19,7 +19,6 @@ def set_button_color(color_code):
             color: white !important;
             border: None !important;
         }}
-        /* 問題文（H1）の見た目は変えず、クリック可能であることを示す設定のみ */
         h1 {{
             cursor: pointer;
             user-select: none;
@@ -28,10 +27,9 @@ def set_button_color(color_code):
         </style>
     """, unsafe_allow_html=True)
 
-# --- 音声再生ロジック (自動再生 & クリック再生) ---
+# --- 音声再生ロジック ---
 def add_voice_logic(text):
     if text:
-        # クリーンな文字列にするためにエスケープ処理
         safe_text = text.replace('"', '\\"')
         js_code = f"""
             <script>
@@ -43,21 +41,14 @@ def add_voice_logic(text):
                 msg.rate = 1.0;
                 window.speechSynthesis.speak(msg);
             }}
-
-            // 1. 問題切り替わり時の自動再生 (少し遅延させて確実に実行)
             setTimeout(speak, 300);
-
-            // 2. 問題文(H1)をクリックした時の再生設定
-            // Streamlitのiframeの外側(親画面)のH1を探してイベントを付与
             const h1Elements = window.parent.document.querySelectorAll('h1');
-            h1Elements.forEach(el => {{
-                el.onclick = speak;
-            }});
+            h1Elements.forEach(el => {{ el.onclick = speak; }});
             </script>
         """
         components.html(js_code, height=0)
 
-# --- 3. Googleスプレッドシート連携 ---
+# --- 3. Googleスプレッドシート連携 (高速化) ---
 @st.cache_resource
 def get_sheet():
     try:
@@ -76,17 +67,13 @@ def load_gs_data():
     try:
         data = sheet.get_all_values()
         if len(data) < 2: return []
-        rows = []
-        for r in data[1:]:
-            rows.append({
-                'en': r[0] if len(r) > 0 else "",
-                'ja': r[1] if len(r) > 1 else "",
-                'count': r[2] if len(r) > 2 else 0,
-                'no': r[3] if len(r) > 3 else 0,
-                'total_shown': r[4] if len(r) > 4 else 0,
-                'is_done': r[5] if len(r) > 5 else 0
-            })
-        return rows
+        return [{
+            'en': r[0], 'ja': r[1], 
+            'count': int(float(r[2])) if len(r)>2 and r[2] else 0,
+            'no': int(float(r[3])) if len(r)>3 and r[3] else 0,
+            'total_shown': int(float(r[4])) if len(r)>4 and r[4] else 0,
+            'is_done': str(r[5]) if len(r)>5 else '0'
+        } for r in data[1:] if r[0]]
     except: return []
 
 def sync_result(word_dict, res_type):
@@ -94,32 +81,36 @@ def sync_result(word_dict, res_type):
     if not sheet: return
     try:
         en_target = str(word_dict['en']).strip()
-        all_col1 = [str(x).strip() for x in sheet.col_values(1)]
+        # 全データを一度に取得して通信回数を減らす
+        data = sheet.get_all_values()
+        col1 = [r[0].strip() for r in data]
         
-        if en_target in all_col1:
-            row_idx = all_col1.index(en_target) + 1
-            row_data = sheet.row_values(row_idx)
-            try:
-                raw_shown = row_data[4] if len(row_data) >= 5 else 0
-                old_shown = int(float(str(raw_shown).strip())) if str(raw_shown).strip() else 0
-            except: old_shown = 0
-            sheet.update_cell(row_idx, 5, old_shown + 1)
+        if en_target in col1:
+            row_idx = col1.index(en_target) + 1
+            row_data = data[row_idx-1]
+            
+            # 既存データの更新値を計算
+            old_shown = int(float(row_data[4])) if len(row_data)>4 and row_data[4] else 0
+            updates = []
+            
+            # total_shownの更新
+            updates.append({'range': gspread.utils.rowcol_to_a1(row_idx, 5), 'values': [[old_shown + 1]]})
 
             if res_type == 'ok':
-                try:
-                    raw_count = row_data[2] if len(row_data) >= 3 else 0
-                    old_count = int(float(str(raw_count).strip())) if str(raw_count).strip() else 0
-                except: old_count = 0
+                old_count = int(float(row_data[2])) if len(row_data)>2 and row_data[2] else 0
                 new_count = old_count + 1
                 if new_count >= 5:
-                    sheet.update_cell(row_idx, 3, 5); sheet.update_cell(row_idx, 6, 1)
+                    updates.append({'range': gspread.utils.rowcol_to_a1(row_idx, 3), 'values': [[5]]})
+                    updates.append({'range': gspread.utils.rowcol_to_a1(row_idx, 6), 'values': [[1]]})
                 else:
-                    sheet.update_cell(row_idx, 3, new_count)
+                    updates.append({'range': gspread.utils.rowcol_to_a1(row_idx, 3), 'values': [[new_count]]})
             else:
-                sheet.update_cell(row_idx, 3, 0); sheet.update_cell(row_idx, 6, 0)
+                updates.append({'range': gspread.utils.rowcol_to_a1(row_idx, 3), 'values': [[0]]})
+                updates.append({'range': gspread.utils.rowcol_to_a1(row_idx, 6), 'values': [[0]]})
+            
+            sheet.batch_update(updates)
         else:
-            try: word_no = int(float(word_dict.get('no', 0)))
-            except: word_no = 0
+            word_no = int(float(word_dict.get('no', 0)))
             is_ok = 1 if res_type == 'ok' else 0
             sheet.append_row([en_target, word_dict['ja'], 5 if is_ok else 0, word_no, 1, 1 if is_ok else 0])
     except: pass
@@ -143,8 +134,8 @@ if 'all_words' not in st.session_state:
     st.session_state.all_words = load_csv()
 
 gs_rows = load_gs_data()
-pending_words = [d for d in gs_rows if d.get('en') and str(d.get('is_done', 0)) != '1']
-gs_dict = {str(d.get('en')).strip(): d for d in gs_rows if d.get('en')}
+pending_words = [d for d in gs_rows if d['is_done'] != '1']
+gs_dict = {d['en'].strip(): d for d in gs_rows}
 
 # --- 5. サイドバー ---
 st.sidebar.title("🎓 学習メニュー")
@@ -155,8 +146,8 @@ st.sidebar.metric("復習が必要な単語数", f"{len(pending_words)} 語")
 if mode != "単語帳":
     nos = [int(w['no']) for w in st.session_state.all_words] or [0]
     col1, col2 = st.sidebar.columns(2)
-    with col1: s_no = st.number_input("開始No.", min(nos), max(nos), min(nos))
-    with col2: e_no = st.number_input("終了No.", min(nos), max(nos), max(nos))
+    s_no = col1.number_input("開始No.", min(nos), max(nos), min(nos))
+    e_no = col2.number_input("終了No.", min(nos), max(nos), max(nos))
     quiz_target = st.sidebar.radio("出題対象", ["全問", "復習のみ"], horizontal=True)
 
     current_settings = f"{s_no}-{e_no}-{quiz_target}-{mode}"
@@ -177,7 +168,6 @@ if mode != "単語帳":
                 sheet.update_cells(cell_list)
             st.cache_data.clear()
             st.session_state.reset_q = True
-            st.success("頻度データをリセットしました")
             st.rerun()
 
 # --- 6. メインコンテンツ ---
@@ -190,12 +180,8 @@ else:
             st.warning("対象となる単語がありません。")
             st.stop()
         
-        weights = []
-        for w in active_list:
-            match = gs_dict.get(str(w['en']).strip(), {})
-            try: s_num = float(str(match.get('total_shown', 0)).strip())
-            except: s_num = 0.0
-            weights.append(1.0 / (s_num + 1.0))
+        # 重み付け計算の高速化
+        weights = [1.0 / (gs_dict.get(str(w['en']).strip(), {}).get('total_shown', 0) + 1.0) for w in active_list]
         
         target = random.choices(active_list, weights=weights, k=1)[0]
         others = random.sample([w for w in st.session_state.all_words if str(w['en']).strip() != str(target['en']).strip()], min(len(st.session_state.all_words)-1, 3))
@@ -205,46 +191,30 @@ else:
         st.session_state.reset_q = False
 
     q = st.session_state.q
-    matching_gs = gs_dict.get(str(q['t']['en']).strip(), {})
+    m_gs = gs_dict.get(str(q['t']['en']).strip(), {})
     
-    try: display_no = int(float(q['t'].get('no', 0)))
-    except: display_no = 0
-    
-    status = ""
-    if matching_gs:
-        is_done = str(matching_gs.get('is_done', 0)) == '1'
-        if is_done: status = " | ✅ 完了済み"
-        else:
-            try: curr_ok = int(float(str(matching_gs.get('count', 0)).strip()))
-            except: curr_ok = 0
-            status = f" | 🔥 あと {max(0, 5 - curr_ok)} 回"
-        try: total_s = int(float(str(matching_gs.get('total_shown', 0)).strip()))
-        except: total_s = 0
-        status += f" | 📊 学習: {total_s}回目"
+    # ステータス表示
+    if m_gs:
+        status = " | ✅ 完了済み" if m_gs['is_done'] == '1' else f" | 🔥 あと {max(0, 5 - m_gs['count'])} 回"
+        status += f" | 📊 学習: {m_gs['total_shown']}回目"
     else:
         status = " | 📊 学習: 初回"
 
-    st.write(f"No.{display_no}{status}")
+    st.write(f"No.{int(float(q['t'].get('no', 0)))}{status}")
     
-    # 問題文の表示（昨夜と同じ st.markdown("# ")）
     question_text = q['t']['en'] if mode == "英→日クイズ" else q['t']['ja']
     st.markdown(f"# {question_text}")
-    
-    # 音声読み上げロジック（自動再生 ＋ クリック再生）を注入
-    # 常に英語の正解単語（q['t']['en']）を読み上げ対象にする
     add_voice_logic(q['t']['en'])
 
     if not q["ans"]:
         cols = st.columns(2)
         for i, c in enumerate(q["c"]):
             choice_text = c['ja'] if mode == "英→日クイズ" else c['en']
-            with cols[i % 2]:
-                if st.button(choice_text, key=f"b{i}", use_container_width=True):
-                    q["ans"] = True
-                    is_correct = (str(c['en']).strip() == str(q['t']['en']).strip())
-                    st.session_state.res_type = "ok" if is_correct else "ng"
-                    sync_result(q['t'], st.session_state.res_type)
-                    st.rerun()
+            if cols[i % 2].button(choice_text, key=f"b{i}", use_container_width=True):
+                q["ans"] = True
+                st.session_state.res_type = "ok" if (str(c['en']).strip() == str(q['t']['en']).strip()) else "ng"
+                sync_result(q['t'], st.session_state.res_type)
+                st.rerun()
         if st.button("❓ わからない", use_container_width=True):
             q["ans"] = True
             st.session_state.res_type = "unknown"
@@ -264,9 +234,7 @@ else:
             st.session_state.reset_q = True
             st.rerun()
 
-        st.write("") 
         for choice in q["c"]:
-            is_target = (str(choice['en']).strip() == str(q['t']['en']).strip())
-            mark = "✅" if is_target else "・"
+            mark = "✅" if (str(choice['en']).strip() == str(q['t']['en']).strip()) else "・"
             st.write(f"{mark} **{choice['en']}** : {choice['ja']}")
         st.divider()
